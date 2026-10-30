@@ -7,7 +7,9 @@ import { runMessage } from '../_shared/rag.ts'
  * Modes (POST JSON):
  *  - config      { client_slug, channel, origin }                        → public widget config (domain-locked)
  *  - message     { client_slug, conversation_id?, content, channel, page_url, origin, lead?, external_id?, visitor_id? }
- *  - poll        { conversation_id, after }                                → messages after index (operator replies)
+ *  - history     { client_slug, conversation_id }                         → full transcript (user, assistant, operator) for a saved conversation
+ *  - poll        { conversation_id, after_id, client_slug? }               → operator (human) replies after the cursor only;
+ *                                                                            without a cursor returns no messages, just `cursor` (latest id)
  *  - feedback    { message_id, value }                                     → 👍/👎
  *  - human_reply { conversation_id, content }  (admin only)               → operator reply, delivered to channel
  *
@@ -24,6 +26,7 @@ Deno.serve(async (req) => {
     switch (body.mode) {
       case 'config': return await modeConfig(sb, body)
       case 'message': return await modeMessage(sb, body)
+      case 'history': return await modeHistory(sb, body)
       case 'poll': return await modePoll(sb, body)
       case 'feedback': return await modeFeedback(sb, body)
       case 'human_reply': {
@@ -63,19 +66,43 @@ async function modeConfig(sb: any, b: any) {
   return json({ name: c.name, widget: c.widget || {}, language: c.language })
 }
 
+/** Saved conversation (widget / standalone page), checked against the client when client_slug is given. */
+async function loadConversation(sb: any, b: any) {
+  if (!b.conversation_id) return null
+  const { data: conv } = await sb.from('wa_conversations').select('id,client_id,status').eq('id', b.conversation_id).maybeSingle()
+  if (!conv) return null
+  if (b.client_slug) {
+    const { data: c } = await sb.from('wa_clients').select('id').eq('slug', b.client_slug).maybeSingle()
+    if (c?.id !== conv.client_id) return null
+  }
+  return conv
+}
+
+async function modeHistory(sb: any, b: any) {
+  // Full transcript, in order, so a reloaded widget / standalone page can show it and set its poll cursor.
+  if (!b.client_slug) return err('client_slug mancante')
+  const conv = await loadConversation(sb, b)
+  if (!conv) return err('Conversazione non trovata', 404)
+  const { data } = await sb.from('wa_messages').select('id,role,content,created_at,feedback').eq('conversation_id', conv.id).order('created_at')
+  return json({ messages: data || [], status: conv.status })
+}
+
 async function modePoll(sb: any, b: any) {
-  // Returns bot/operator messages created after the last message the client already has (by id).
-  if (!b.conversation_id) return json({ messages: [] })
+  // Only operator (human) replies after the cursor: bot replies come back from `message`, older messages from `history`.
+  const conv = await loadConversation(sb, b)
+  if (!conv) return err('Conversazione non trovata', 404)
   let since: string | null = null
   if (b.after_id) {
-    const { data: last } = await sb.from('wa_messages').select('created_at').eq('id', b.after_id).maybeSingle()
+    const { data: last } = await sb.from('wa_messages').select('created_at').eq('id', b.after_id).eq('conversation_id', conv.id).maybeSingle()
     since = last?.created_at || null
   }
-  let q = sb.from('wa_messages').select('id,role,content,created_at').eq('conversation_id', b.conversation_id).neq('role', 'user').order('created_at')
-  if (since) q = q.gt('created_at', since)
-  const { data } = await q
-  const { data: conv } = await sb.from('wa_conversations').select('status').eq('id', b.conversation_id).maybeSingle()
-  return json({ messages: data || [], status: conv?.status })
+  if (!since) {
+    // no (valid) cursor: never send the whole history, just the latest message id to start from
+    const { data: latest } = await sb.from('wa_messages').select('id').eq('conversation_id', conv.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    return json({ messages: [], cursor: latest?.id || null, status: conv.status })
+  }
+  const { data } = await sb.from('wa_messages').select('id,role,content,created_at').eq('conversation_id', conv.id).eq('role', 'human').gt('created_at', since).order('created_at')
+  return json({ messages: data || [], status: conv.status })
 }
 
 async function modeFeedback(sb: any, b: any) {

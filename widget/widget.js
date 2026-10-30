@@ -18,8 +18,8 @@
 
   const api = async (body) => {
     const r = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: ANON, Authorization: `Bearer ${ANON}` }, body: JSON.stringify(body) })
-    const j = await r.json()
-    if (!r.ok) throw new Error(j.error || 'Errore')
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw Object.assign(new Error(j.error || 'Errore'), { status: r.status })
     return j
   }
 
@@ -41,7 +41,13 @@
   let lead = {}
   let open = false
   let pollTimer = null
-  let lastId = null // id of the last server-side message we hold (for polling)
+  let lastId = null // poll cursor: id of the last server-side message shown
+
+  const welcomeMsg = () => ({ role: 'assistant', content: cfg.widget?.welcome || 'Ciao! Come posso aiutarti?' })
+  function resetConv() {
+    convId = null; lastId = null; clearInterval(pollTimer)
+    try { sessionStorage.removeItem(storeKey) } catch {}
+  }
 
   async function init() {
     try { cfg = await api({ mode: 'config', client_slug: slug, channel: 'web', origin: location.hostname }) } catch (e) { return console.warn('[WISI Assistant]', e.message) }
@@ -66,7 +72,9 @@
   .head img{width:28px;height:28px;border-radius:50%}
   .head .t{font-weight:800;text-transform:uppercase;font-size:13px;letter-spacing:.03em}
   .head .s{font-size:11px;opacity:.85}
-  .head button{margin-left:auto;background:none;border:none;color:#fff;font-size:18px;cursor:pointer}
+  .head button{background:none;border:none;color:#fff;cursor:pointer}
+  .head .new{margin-left:auto;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;border:1px solid rgba(255,255,255,.6);border-radius:3px;padding:4px 7px}
+  .head .close{font-size:18px}
   .body{flex:1;overflow:auto;padding:14px;background:#F8F8F8;display:flex;flex-direction:column;gap:8px}
   .m{max-width:84%;padding:9px 12px;border-radius:8px;font-size:13px;line-height:1.45;word-break:break-word}
   .m.user{align-self:flex-end;background:${color};color:#fff;border-bottom-right-radius:2px}
@@ -91,7 +99,7 @@
 </style>
 <button class="launcher" aria-label="Apri chat">&#x1F4AC;</button>
 <div class="panel">
-  <div class="head">${cfg.widget?.avatar_url ? `<img src="${esc(cfg.widget.avatar_url)}" alt="">` : ''}<div><div class="t">${esc(cfg.widget?.title || 'Assistente')}</div><div class="s">${esc(cfg.name)}</div></div><button class="close" aria-label="Chiudi">&#x2715;</button></div>
+  <div class="head">${cfg.widget?.avatar_url ? `<img src="${esc(cfg.widget.avatar_url)}" alt="">` : ''}<div><div class="t">${esc(cfg.widget?.title || 'Assistente')}</div><div class="s">${esc(cfg.name)}</div></div><button class="new" type="button">Nuova conversazione</button><button class="close" aria-label="Chiudi">&#x2715;</button></div>
   <div class="body"></div>
   <form class="in"><input placeholder="Scrivi un messaggio&hellip;" autocomplete="off"><button>Invia</button></form>
   <div class="pw">Powered by WISI Assistant</div>
@@ -100,18 +108,33 @@
 
     const $ = (s) => shadow.querySelector(s)
     const body = $('.body'), form = $('form.in'), input = $('form.in input'), panel = $('.panel')
-    $('.launcher').onclick = () => { open = !open; panel.classList.toggle('open', open); $('.launcher').textContent = open ? '\u2715' : '\uD83D\uDCAC'; if (open) { input.focus(); if (!msgs.length) start() } }
+    $('.launcher').onclick = () => { open = !open; panel.classList.toggle('open', open); $('.launcher').textContent = open ? '\u2715' : '\uD83D\uDCAC'; if (open) { input.focus(); if (!msgs.length && !busy) start() } }
     $('.close').onclick = () => $('.launcher').click()
+    $('.new').onclick = () => { if (busy) return; resetConv(); msgs = []; leadDone = false; lead = {}; start() }
 
-    function start() {
+    async function start() {
+      if (convId) {
+        // saved conversation (page reloaded): show the full transcript and poll from its last message
+        busy = true; paint()
+        try {
+          const h = await api({ mode: 'history', client_slug: slug, conversation_id: convId })
+          const hist = h.messages || []
+          msgs = [welcomeMsg(), ...hist]
+          lastId = hist.length ? hist[hist.length - 1].id : null
+          leadDone = true
+          busy = false; paint(); startPolling()
+          return
+        } catch { resetConv() } // gone or failed: start over
+        busy = false
+      }
       if (cfg.widget?.lead_capture === 'before' && !leadDone) return showLead(() => { paint(); input.focus() })
-      msgs.push({ role: 'assistant', content: cfg.widget?.welcome || 'Ciao! Come posso aiutarti?' })
+      msgs.push(welcomeMsg())
       paint()
     }
 
     function showLead(done) {
       body.innerHTML = `<form class="lead"><label>Nome</label><input name="name" required><label>Email</label><input name="email" type="email" required><button>Inizia la chat</button></form>`
-      body.querySelector('form').onsubmit = (e) => { e.preventDefault(); const fd = new FormData(e.target); lead = { name: fd.get('name'), email: fd.get('email') }; leadDone = true; msgs.push({ role: 'assistant', content: cfg.widget?.welcome || 'Ciao! Come posso aiutarti?' }); done() }
+      body.querySelector('form').onsubmit = (e) => { e.preventDefault(); const fd = new FormData(e.target); lead = { name: fd.get('name'), email: fd.get('email') }; leadDone = true; msgs.push(welcomeMsg()); done() }
     }
 
     function paint() {
@@ -140,9 +163,8 @@
       input.value = ''; busy = true; msgs.push({ role: 'user', content }); paint()
       try {
         const r = await api({ mode: 'message', client_slug: slug, conversation_id: convId, content, channel: 'web', page_url: location.href, origin: location.hostname, lead: leadDone ? lead : undefined })
-        if (r.conversation_id && r.conversation_id !== convId) { convId = r.conversation_id; sessionStorage.setItem(storeKey, convId); startPolling() }
+        if (r.conversation_id && r.conversation_id !== convId) { convId = r.conversation_id; lastId = r.message_id || null; sessionStorage.setItem(storeKey, convId); startPolling() }
         msgs.push({ role: r.role || 'assistant', content: r.content, id: r.message_id })
-        if (r.message_id) lastId = r.message_id
         if (cfg.widget?.lead_capture === 'after' && !leadDone && msgs.filter((m) => m.role === 'user').length === 1) { busy = false; return showLead(() => { paint() }) }
       } catch (e) { msgs.push({ role: 'assistant', content: `Si \u00E8 verificato un errore: ${e.message}` }) }
       busy = false; paint()
@@ -150,18 +172,22 @@
     form.onsubmit = (e) => { e.preventDefault(); send() }
 
     function startPolling() {
-      // Picks up operator (human) replies and bot messages sent from other channels.
+      // Picks up operator (human) replies after the cursor (the server never returns bot replies here).
       clearInterval(pollTimer)
       pollTimer = setInterval(async () => {
-        if (!convId) return
+        const id = convId
+        if (!id) return
         try {
-          const r = await api({ mode: 'poll', conversation_id: convId, after_id: lastId })
-          const fresh = (r.messages || []).filter((m) => !msgs.some((x) => x.id === m.id))
-          if (fresh.length) { msgs.push(...fresh); lastId = fresh[fresh.length - 1].id; paint() }
-        } catch {}
+          const r = await api({ mode: 'poll', client_slug: slug, conversation_id: id, after_id: lastId })
+          if (id !== convId) return // conversation reset meanwhile
+          const got = r.messages || []
+          if (got.length) lastId = got[got.length - 1].id
+          else if (!lastId && r.cursor) lastId = r.cursor
+          const fresh = got.filter((m) => !msgs.some((x) => x.id === m.id))
+          if (fresh.length) { msgs.push(...fresh); paint() }
+        } catch (e) { if (e.status === 404 && id === convId) resetConv() }
       }, 4000)
     }
-    if (convId) startPolling()
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init()
