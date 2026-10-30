@@ -42,7 +42,7 @@ export default function Settings({ client, reload }) {
       confidence_threshold: Number(f.confidence_threshold), temperature: Number(f.temperature), rate_limit_per_hour: Number(f.rate_limit_per_hour),
       widget: { ...f.widget, suggestions: (typeof f.widget.suggestions === 'string' ? f.widget.suggestions.split('\n') : f.widget.suggestions).map((s) => s.trim()).filter(Boolean) },
     }
-    const { error } = await supabase.from('clients').update(payload).eq('id', client.id)
+    const { error } = await supabase.from('wa_clients').update(payload).eq('id', client.id)
     setBusy(false)
     if (error) return setToast(error.message)
     setToast('Impostazioni salvate'); reload()

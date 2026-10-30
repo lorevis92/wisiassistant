@@ -29,8 +29,10 @@ wisiassistant/
 ## Setup (una volta sola)
 
 ### 1. Supabase
-1. Crea un progetto. SQL Editor → esegui `supabase/migrations/0001_init.sql`.
-2. Authentication → Users → **Add user** (la tua email/password: è l'unico login).
+1. Il progetto è il Supabase condiviso **wisinvaders** (vedi *Database condiviso* sotto). Assicurati che l'utente admin
+   (`lorewhiskey@gmail.com`) esista in Authentication → Users, poi SQL Editor → esegui `supabase/migrations/0001_init.sql`
+   (lo inserisce in `wa_admins`). Per aggiungere altri admin: `insert into public.wa_admins(user_id) select id from auth.users where email = '...';`
+2. Solo gli utenti in `wa_admins` possono entrare nel pannello: gli altri utenti del progetto (di altre app) vedono "Accesso non autorizzato".
 3. Project Settings → API: copia `URL`, `anon key`, `service_role key`.
 4. Installa la CLI (`npm i -g supabase`), poi:
    ```bash
@@ -85,7 +87,16 @@ npm run dev
 Crawler locale: `cd crawler && pip install -r requirements.txt && playwright install chromium && uvicorn main:app --reload`.
 
 ## Note tecniche
-- RLS: solo utenti autenticati (tu) accedono alle tabelle. Widget e canali passano solo dalle edge functions (service role).
+- RLS: solo gli admin (`wa_is_admin()`, cioè `auth.uid()` in `wa_admins`) accedono alle tabelle e al bucket `wa-documents`.
+  Widget e canali passano solo dalle edge functions (service role). Edge functions admin e crawler verificano JWT **e** appartenenza a `wa_admins` (altrimenti 403).
 - Il crawler scrive direttamente su Supabase (REST, service role). Pagine con contenuto invariato (hash) non vengono ri-embeddate.
-- `match_chunks` usa similarità coseno su HNSW; la soglia di confidenza per cliente decide quando il bot "non sa".
+- `wa_match_chunks` usa similarità coseno su HNSW; la soglia di confidenza per cliente decide quando il bot "non sa".
 - Per aggiungere un modello: una riga in `src/lib/models.js` (provider/id). Provider supportati in `supabase/functions/_shared/common.ts`.
+
+## Database condiviso
+WISI Assistant vive nel progetto Supabase **wisinvaders**, insieme ad altre app. Per isolarlo:
+- tutto ciò che crea ha prefisso `wa_`: tabelle (`wa_clients`, `wa_pages`, `wa_chunks`, `wa_crawl_jobs`, `wa_conversations`, `wa_messages`,
+  `wa_leads`, `wa_reports`, `wa_rate_limits`, `wa_admins`), vista `wa_client_stats`, funzioni `wa_match_chunks`, `wa_check_rate_limit`,
+  `wa_is_admin`, `wa_touch_updated_at`, `wa_on_message_insert`, trigger, indici, policy, job cron (`wa_reports`, `wa_ratelimit_cleanup`)
+  e bucket storage `wa-documents`;
+- le migration creano/sostituiscono/eliminano **solo** oggetti `wa_`: mai toccare tabelle, funzioni o policy di altre app.

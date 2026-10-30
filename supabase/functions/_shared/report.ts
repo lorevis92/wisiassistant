@@ -7,5 +7,5 @@ export async function sendReport(sb: any, report: any, client: any) {
     ${mdToHtml(report.body_md || '')}
     <div style="border-top:1px solid #E8E8E8;margin-top:20px;padding-top:10px;font-size:11px;color:#666">Report generato automaticamente dall'assistente AI di ${client.name}.</div></div>`
   await sendEmail(report.recipients, report.subject, html, report.body_md)
-  await sb.from('reports').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', report.id)
+  await sb.from('wa_reports').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', report.id)
 }

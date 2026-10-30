@@ -17,11 +17,11 @@ export default function ReportsView({ client = null }) {
   const [busy, setBusy] = useState(false)
 
   const load = async () => {
-    let q = supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(100)
+    let q = supabase.from('wa_reports').select('*').order('created_at', { ascending: false }).limit(100)
     if (client) q = q.eq('client_id', client.id)
     const { data } = await q
     setReports(data || [])
-    if (!client) { const { data: cs } = await supabase.from('clients').select('id,name'); const m = {}; for (const c of cs || []) m[c.id] = c.name; setClients(m) }
+    if (!client) { const { data: cs } = await supabase.from('wa_clients').select('id,name'); const m = {}; for (const c of cs || []) m[c.id] = c.name; setClients(m) }
   }
   useEffect(() => { load() }, [client?.id])
 
@@ -31,15 +31,15 @@ export default function ReportsView({ client = null }) {
     setBusy(false)
   }
   const save = async () => {
-    await supabase.from('reports').update({ subject: edit.subject, body_md: edit.body_md }).eq('id', edit.id)
+    await supabase.from('wa_reports').update({ subject: edit.subject, body_md: edit.body_md }).eq('id', edit.id)
     setToast('Salvato'); load()
   }
   const approveAndSend = async () => {
     setBusy(true)
-    try { await supabase.from('reports').update({ subject: edit.subject, body_md: edit.body_md, status: 'approved' }).eq('id', edit.id); await callFunction('send-report', { report_id: edit.id }); setToast('Report inviato'); setEdit(null); load() } catch (e) { setToast(e.message) }
+    try { await supabase.from('wa_reports').update({ subject: edit.subject, body_md: edit.body_md, status: 'approved' }).eq('id', edit.id); await callFunction('send-report', { report_id: edit.id }); setToast('Report inviato'); setEdit(null); load() } catch (e) { setToast(e.message) }
     setBusy(false)
   }
-  const del = async (id) => { if (confirm('Eliminare il report?')) { await supabase.from('reports').delete().eq('id', id); load() } }
+  const del = async (id) => { if (confirm('Eliminare il report?')) { await supabase.from('wa_reports').delete().eq('id', id); load() } }
 
   return (
     <div className="col" style={{ gap: 16 }}>

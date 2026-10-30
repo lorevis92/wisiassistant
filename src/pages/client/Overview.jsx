@@ -11,10 +11,10 @@ export default function Overview({ client }) {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('client_stats').select('*').eq('client_id', client.id).maybeSingle()
+      const { data } = await supabase.from('wa_client_stats').select('*').eq('client_id', client.id).maybeSingle()
       setS(data || {})
       const since = daysAgo(30)
-      const { data: q } = await supabase.from('messages')
+      const { data: q } = await supabase.from('wa_messages')
         .select('content, conversation:conversations!inner(client_id)')
         .eq('role', 'user').eq('conversation.client_id', client.id).gte('created_at', since).limit(500)
       const freq = {}
@@ -23,7 +23,7 @@ export default function Overview({ client }) {
         if (k.length > 6) freq[k] = (freq[k] || 0) + 1
       }
       setTop(Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8))
-      const { data: un } = await supabase.from('messages')
+      const { data: un } = await supabase.from('wa_messages')
         .select('content, created_at, conversation:conversations!inner(client_id)')
         .eq('role', 'user').eq('no_answer', true).eq('conversation.client_id', client.id).gte('created_at', since)
         .order('created_at', { ascending: false }).limit(8)

@@ -20,13 +20,13 @@ export default function InboxView({ clientId = null }) {
   const bottom = useRef(null)
 
   const load = async () => {
-    let q = supabase.from('conversations').select('*').order('updated_at', { ascending: false }).limit(200)
+    let q = supabase.from('wa_conversations').select('*').order('updated_at', { ascending: false }).limit(200)
     q = showResolved ? q.in('status', ['escalated', 'human', 'resolved']) : q.in('status', ['escalated', 'human'])
     if (clientId) q = q.eq('client_id', clientId)
     const { data } = await q
     setList(data || [])
     if (!clientId) {
-      const { data: cs } = await supabase.from('clients').select('id,name')
+      const { data: cs } = await supabase.from('wa_clients').select('id,name')
       const m = {}; for (const c of cs || []) m[c.id] = c.name; setClients(m)
     }
   }
@@ -34,8 +34,8 @@ export default function InboxView({ clientId = null }) {
 
   useEffect(() => {
     const ch = supabase.channel(`inbox-${clientId || 'all'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, () => load())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (p) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_conversations' }, () => load())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_messages' }, (p) => {
         if (p.new.conversation_id === active) setMessages((m) => [...m, p.new])
       }).subscribe()
     return () => { supabase.removeChannel(ch) }
@@ -43,15 +43,15 @@ export default function InboxView({ clientId = null }) {
 
   useEffect(() => {
     if (!active) return
-    supabase.from('messages').select('*').eq('conversation_id', active).order('created_at').then(({ data }) => setMessages(data || []))
+    supabase.from('wa_messages').select('*').eq('conversation_id', active).order('created_at').then(({ data }) => setMessages(data || []))
   }, [active])
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const current = list?.find((c) => c.id === active)
 
-  const takeOver = async () => { await supabase.from('conversations').update({ status: 'human' }).eq('id', active); load() }
-  const giveBack = async () => { await supabase.from('conversations').update({ status: 'open' }).eq('id', active); setActive(null); load() }
-  const resolve = async () => { await supabase.from('conversations').update({ status: 'resolved' }).eq('id', active); load() }
+  const takeOver = async () => { await supabase.from('wa_conversations').update({ status: 'human' }).eq('id', active); load() }
+  const giveBack = async () => { await supabase.from('wa_conversations').update({ status: 'open' }).eq('id', active); setActive(null); load() }
+  const resolve = async () => { await supabase.from('wa_conversations').update({ status: 'resolved' }).eq('id', active); load() }
 
   const send = async (e) => {
     e.preventDefault()

@@ -5,7 +5,7 @@ import { fmtDateTime } from '../../lib/utils'
 export default function Leads({ client }) {
   const [leads, setLeads] = useState(null)
   useEffect(() => {
-    supabase.from('leads').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).then(({ data }) => setLeads(data || []))
+    supabase.from('wa_leads').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).then(({ data }) => setLeads(data || []))
   }, [client.id])
 
   const exportCsv = () => {

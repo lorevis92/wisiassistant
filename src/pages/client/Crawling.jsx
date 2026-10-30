@@ -36,7 +36,7 @@ function RulesEditor({ client, reload, setToast }) {
   const [exc, setExc] = useState((client.exclude_patterns || []).join('\n'))
   const save = async () => {
     const toList = (s) => s.split('\n').map((x) => x.trim()).filter(Boolean)
-    const { error } = await supabase.from('clients').update({ include_patterns: toList(inc), exclude_patterns: toList(exc) }).eq('id', client.id)
+    const { error } = await supabase.from('wa_clients').update({ include_patterns: toList(inc), exclude_patterns: toList(exc) }).eq('id', client.id)
     if (error) return setToast(error.message)
     setToast('Regole salvate'); setOpen(false); reload()
   }
@@ -78,17 +78,17 @@ function Discover({ client, reload, setToast }) {
   const [extraExc, setExtraExc] = useState([])  // session-only exclusions (not saved unless user clicks)
 
   useEffect(() => {
-    supabase.from('pages').select('url').eq('client_id', client.id).then(({ data }) => setIndexed(new Set((data || []).map((p) => p.url))))
+    supabase.from('wa_pages').select('url').eq('client_id', client.id).then(({ data }) => setIndexed(new Set((data || []).map((p) => p.url))))
   }, [client.id])
 
   // Live job progress
   useEffect(() => {
     const ch = supabase.channel(`jobs-${client.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'crawl_jobs', filter: `client_id=eq.${client.id}` }, (p) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_crawl_jobs', filter: `client_id=eq.${client.id}` }, (p) => {
         setJob(p.new)
         if (p.new?.status === 'done' || p.new?.status === 'error') { reload() }
       }).subscribe()
-    supabase.from('crawl_jobs').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).limit(1).maybeSingle().then(({ data }) => setJob(data))
+    supabase.from('wa_crawl_jobs').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).limit(1).maybeSingle().then(({ data }) => setJob(data))
     return () => { supabase.removeChannel(ch) }
   }, [client.id])
 
@@ -120,7 +120,7 @@ function Discover({ client, reload, setToast }) {
   const excludePrefix = (p) => { setExtraExc([...extraExc, `${p}*`]); const s = new Set(selected); urls.forEach((u) => { if (matchesPattern(u, `${p}*`)) s.delete(u) }); setSelected(s) }
   const saveExtraExc = async () => {
     const merged = Array.from(new Set([...(client.exclude_patterns || []), ...extraExc]))
-    await supabase.from('clients').update({ exclude_patterns: merged }).eq('id', client.id)
+    await supabase.from('wa_clients').update({ exclude_patterns: merged }).eq('id', client.id)
     setExtraExc([]); reload(); setToast('Esclusioni salvate nelle regole')
   }
 
@@ -230,13 +230,13 @@ function IndexedPages({ client, setToast }) {
   const [sort, setSort] = useState('url')
 
   const load = async () => {
-    const { data } = await supabase.from('pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).order('url')
+    const { data } = await supabase.from('wa_pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).order('url')
     setPages(data || [])
   }
   useEffect(() => { load() }, [client.id])
   useEffect(() => {
     const ch = supabase.channel(`pages-${client.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pages', filter: `client_id=eq.${client.id}` }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_pages', filter: `client_id=eq.${client.id}` }, () => load())
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [client.id])
@@ -257,12 +257,12 @@ function IndexedPages({ client, setToast }) {
   const del = async (list) => {
     if (!list.length) return
     if (!confirm(`Eliminare ${list.length} pagine e i relativi chunk?`)) return
-    const { error } = await supabase.from('pages').delete().in('id', list)
+    const { error } = await supabase.from('wa_pages').delete().in('id', list)
     if (error) return setToast(error.message)
     setSel(new Set()); setToast(`${list.length} pagine eliminate`); load()
   }
   const setEnabled = async (list, enabled) => {
-    await supabase.from('pages').update({ enabled }).in('id', list)
+    await supabase.from('wa_pages').update({ enabled }).in('id', list)
     setSel(new Set()); load()
   }
   const recrawl = async (list) => {

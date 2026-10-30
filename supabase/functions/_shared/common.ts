@@ -16,7 +16,7 @@ export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 export const err = (message: string, status = 400) => json({ error: message }, status)
 
-/** Returns the authenticated user if the request carries a valid user JWT (admin), else null. */
+/** Returns the authenticated user if the request carries a valid user JWT, else null (admin check: requireAdmin). */
 export async function getUser(req: Request) {
   const auth = req.headers.get('Authorization') || ''
   const token = auth.replace(/^Bearer\s+/i, '')
@@ -29,6 +29,21 @@ export async function getUser(req: Request) {
 export function isServiceRole(req: Request) {
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
   return !!token && token === SERVICE_KEY
+}
+
+/** True if the user is listed in wa_admins (the shared DB has users of other apps too). */
+export async function isAdmin(userId: string) {
+  const { data } = await admin().from('wa_admins').select('user_id').eq('user_id', userId).maybeSingle()
+  return !!data
+}
+
+/** Admin gate: null if the request is service role or a valid JWT of a wa_admins user, else a 401/403 response. */
+export async function requireAdmin(req: Request): Promise<Response | null> {
+  if (isServiceRole(req)) return null
+  const user = await getUser(req)
+  if (!user) return err('Non autorizzato', 401)
+  if (!(await isAdmin(user.id))) return err('Accesso non autorizzato', 403)
+  return null
 }
 
 // ------------------------------------------------------------------ EMBEDDINGS

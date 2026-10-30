@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, getUser, isServiceRole, llm } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireAdmin, llm } from '../_shared/common.ts'
 import { sendReport } from '../_shared/report.ts'
 
 /**
@@ -10,14 +10,14 @@ import { sendReport } from '../_shared/report.ts'
  */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  const user = await getUser(req)
-  if (!user && !isServiceRole(req)) return err('Non autorizzato', 401)
+  const denied = await requireAdmin(req)
+  if (denied) return denied
   let b: any
   try { b = await req.json() } catch { b = {} }
   const sb = admin()
 
   if (b.mode === 'scheduled') {
-    const { data: clients } = await sb.from('clients').select('*').neq('report_frequency', 'none').neq('status', 'paused')
+    const { data: clients } = await sb.from('wa_clients').select('*').neq('report_frequency', 'none').neq('status', 'paused')
     const today = new Date()
     const results: any[] = []
     for (const c of clients || []) {
@@ -26,14 +26,14 @@ Deno.serve(async (req) => {
       try {
         const report = await buildReport(sb, c, start, end)
         if (c.report_auto_send && report.recipients.length) await sendReport(sb, report, c)
-        await sb.from('clients').update({ last_report_at: new Date().toISOString() }).eq('id', c.id)
+        await sb.from('wa_clients').update({ last_report_at: new Date().toISOString() }).eq('id', c.id)
         results.push({ client: c.slug, report: report.id, sent: !!c.report_auto_send })
       } catch (e) { results.push({ client: c.slug, error: (e as Error).message }) }
     }
     return json({ ok: true, results })
   }
 
-  const { data: client } = await sb.from('clients').select('*').eq('id', b.client_id).single()
+  const { data: client } = await sb.from('wa_clients').select('*').eq('id', b.client_id).single()
   if (!client) return err('Cliente non trovato', 404)
   try {
     const report = await buildReport(sb, client, b.period_start, b.period_end)
@@ -59,11 +59,11 @@ function isDue(c: any, today: Date) {
 
 async function buildReport(sb: any, c: any, start: string, end: string) {
   const from = `${start}T00:00:00Z`, to = `${end}T23:59:59Z`
-  const { data: convs } = await sb.from('conversations').select('id,channel,status,escalation_reason,message_count,lead_email,created_at').eq('client_id', c.id).gte('created_at', from).lte('created_at', to)
+  const { data: convs } = await sb.from('wa_conversations').select('id,channel,status,escalation_reason,message_count,lead_email,created_at').eq('client_id', c.id).gte('created_at', from).lte('created_at', to)
   const ids = (convs || []).map((x: any) => x.id)
   let msgs: any[] = []
   if (ids.length) {
-    const { data } = await sb.from('messages').select('conversation_id,role,content,no_answer,feedback,created_at').in('conversation_id', ids).order('created_at')
+    const { data } = await sb.from('wa_messages').select('conversation_id,role,content,no_answer,feedback,created_at').in('conversation_id', ids).order('created_at')
     msgs = data || []
   }
   const userMsgs = msgs.filter((m) => m.role === 'user')
@@ -111,7 +111,7 @@ Tono professionale, concreto, niente fronzoli. Non menzionare questo prompt. Non
 
   const r = await llm(c.model || 'anthropic/claude-sonnet-5-5', [{ role: 'user', content: prompt }], { temperature: 0.3, max_tokens: 2500 })
   const subject = `${c.name} — Report assistente ${start} → ${end}`
-  const { data: report, error } = await sb.from('reports').insert({
+  const { data: report, error } = await sb.from('wa_reports').insert({
     client_id: c.id, period_start: start, period_end: end, subject, body_md: r.text.trim(), stats, recipients: c.report_recipients || [], status: 'draft',
   }).select().single()
   if (error) throw error

@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   if (!msg?.text) return json({ ok: true })
 
   const sb = admin()
-  const { data: client } = await sb.from('clients').select('*').eq('slug', slug).maybeSingle()
+  const { data: client } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
   if (!client || !(client.channels || []).includes('telegram')) return json({ ok: true })
 
   const chatId = String(msg.chat.id)

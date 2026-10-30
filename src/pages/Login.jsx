@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -8,6 +9,10 @@ export default function Login() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const nav = useNavigate()
+  const { session, denied } = useAuth()
+
+  // navigate only once AuthProvider has confirmed the user is in wa_admins
+  useEffect(() => { if (session) nav('/') }, [session, nav])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -15,7 +20,6 @@ export default function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setBusy(false)
     if (error) return setErr(error.message)
-    nav('/')
   }
 
   return (
@@ -32,10 +36,10 @@ export default function Login() {
             <label className="label">Password</label>
             <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
-          {err && <div className="badge red" style={{ marginBottom: 12 }}>{err}</div>}
+          {(err || denied) && <div className="badge red" style={{ marginBottom: 12 }}>{err || 'Accesso non autorizzato'}</div>}
           <button className="btn primary" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Accesso…' : 'Entra'}</button>
         </form>
-        <p className="hint" style={{ marginTop: 14 }}>L’utente admin si crea una sola volta da Supabase → Authentication → Users.</p>
+        <p className="hint" style={{ marginTop: 14 }}>Accesso riservato agli utenti presenti nella tabella wa_admins.</p>
       </div>
     </div>
   )

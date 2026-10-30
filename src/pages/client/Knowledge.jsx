@@ -14,14 +14,14 @@ export default function Knowledge({ client }) {
   const [uploading, setUploading] = useState(false)
 
   const load = async () => {
-    const { data } = await supabase.from('pages').select('id,url,title,kind,status,chunk_count,enabled,last_crawled_at,error,created_at')
+    const { data } = await supabase.from('wa_pages').select('id,url,title,kind,status,chunk_count,enabled,last_crawled_at,error,created_at')
       .eq('client_id', client.id).in('kind', ['document', 'faq', 'text']).order('created_at', { ascending: false })
     setDocs(data || [])
   }
   useEffect(() => { load() }, [client.id])
   useEffect(() => {
     const ch = supabase.channel(`kb-${client.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pages', filter: `client_id=eq.${client.id}` }, () => load()).subscribe()
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_pages', filter: `client_id=eq.${client.id}` }, () => load()).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [client.id])
 
@@ -30,7 +30,7 @@ export default function Knowledge({ client }) {
     setUploading(true)
     try {
       const path = `${client.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-      const { error } = await supabase.storage.from('documents').upload(path, file, { upsert: false })
+      const { error } = await supabase.storage.from('wa-documents').upload(path, file, { upsert: false })
       if (error) throw error
       await callFunction('ingest', { client_id: client.id, kind: 'document', storage_path: path, title: file.name })
       setToast('Documento caricato, indicizzazione in corso')
@@ -52,8 +52,8 @@ export default function Knowledge({ client }) {
       setTxt({ title: '', content: '', link: '' }); setTextOpen(false); setToast('Testo aggiunto')
     } catch (er) { setToast(er.message) }
   }
-  const del = async (id) => { if (confirm('Eliminare?')) { await supabase.from('pages').delete().eq('id', id); load() } }
-  const toggle = async (d) => { await supabase.from('pages').update({ enabled: !d.enabled }).eq('id', d.id); load() }
+  const del = async (id) => { if (confirm('Eliminare?')) { await supabase.from('wa_pages').delete().eq('id', id); load() } }
+  const toggle = async (d) => { await supabase.from('wa_pages').update({ enabled: !d.enabled }).eq('id', d.id); load() }
 
   return (
     <div className="col" style={{ gap: 16 }}>

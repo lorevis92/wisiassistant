@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, getUser, isServiceRole } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireAdmin } from '../_shared/common.ts'
 import { deliverToChannel } from '../_shared/channels.ts'
 import { runMessage } from '../_shared/rag.ts'
 
@@ -27,8 +27,8 @@ Deno.serve(async (req) => {
       case 'poll': return await modePoll(sb, body)
       case 'feedback': return await modeFeedback(sb, body)
       case 'human_reply': {
-        const user = await getUser(req)
-        if (!user && !isServiceRole(req)) return err('Non autorizzato', 401)
+        const denied = await requireAdmin(req)
+        if (denied) return denied
         return await modeHumanReply(sb, body)
       }
       default: return err('mode sconosciuto')
@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
 
 // ------------------------------------------------------------------ helpers
 async function loadClient(sb: any, slug: string) {
-  const { data } = await sb.from('clients').select('*').eq('slug', slug).maybeSingle()
+  const { data } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
   if (!data) throw new Error('Cliente non trovato')
   if (data.status === 'paused') throw new Error('Assistente in pausa')
   return data
@@ -68,26 +68,26 @@ async function modePoll(sb: any, b: any) {
   if (!b.conversation_id) return json({ messages: [] })
   let since: string | null = null
   if (b.after_id) {
-    const { data: last } = await sb.from('messages').select('created_at').eq('id', b.after_id).maybeSingle()
+    const { data: last } = await sb.from('wa_messages').select('created_at').eq('id', b.after_id).maybeSingle()
     since = last?.created_at || null
   }
-  let q = sb.from('messages').select('id,role,content,created_at').eq('conversation_id', b.conversation_id).neq('role', 'user').order('created_at')
+  let q = sb.from('wa_messages').select('id,role,content,created_at').eq('conversation_id', b.conversation_id).neq('role', 'user').order('created_at')
   if (since) q = q.gt('created_at', since)
   const { data } = await q
-  const { data: conv } = await sb.from('conversations').select('status').eq('id', b.conversation_id).maybeSingle()
+  const { data: conv } = await sb.from('wa_conversations').select('status').eq('id', b.conversation_id).maybeSingle()
   return json({ messages: data || [], status: conv?.status })
 }
 
 async function modeFeedback(sb: any, b: any) {
-  await sb.from('messages').update({ feedback: b.value === 1 ? 1 : -1 }).eq('id', b.message_id)
+  await sb.from('wa_messages').update({ feedback: b.value === 1 ? 1 : -1 }).eq('id', b.message_id)
   return json({ ok: true })
 }
 
 async function modeHumanReply(sb: any, b: any) {
-  const { data: conv } = await sb.from('conversations').select('*, client:clients(*)').eq('id', b.conversation_id).single()
+  const { data: conv } = await sb.from('wa_conversations').select('*, client:wa_clients(*)').eq('id', b.conversation_id).single()
   if (!conv) return err('Conversazione non trovata', 404)
-  const { data: m } = await sb.from('messages').insert({ conversation_id: conv.id, role: 'human', content: b.content }).select().single()
-  if (conv.status !== 'human') await sb.from('conversations').update({ status: 'human' }).eq('id', conv.id)
+  const { data: m } = await sb.from('wa_messages').insert({ conversation_id: conv.id, role: 'human', content: b.content }).select().single()
+  if (conv.status !== 'human') await sb.from('wa_conversations').update({ status: 'human' }).eq('id', conv.id)
   await deliverToChannel(conv.client, conv, b.content)
   return json({ ok: true, message_id: m.id })
 }

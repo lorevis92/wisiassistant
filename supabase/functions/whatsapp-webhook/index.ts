@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { return json({ ok: true }) }
 
   const sb = admin()
-  const { data: client } = await sb.from('clients').select('*').eq('slug', slug).maybeSingle()
+  const { data: client } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
   if (!client) return json({ ok: true })
 
   const inbound: { channel: 'whatsapp' | 'messenger' | 'instagram'; from: string; text: string; label?: string }[] = []

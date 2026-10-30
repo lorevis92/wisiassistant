@@ -14,9 +14,9 @@ export default function Clients() {
   const nav = useNavigate()
 
   const load = async () => {
-    const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false })
+    const { data } = await supabase.from('wa_clients').select('*').order('created_at', { ascending: false })
     setClients(data || [])
-    const { data: s } = await supabase.from('client_stats').select('*')
+    const { data: s } = await supabase.from('wa_client_stats').select('*')
     const m = {}
     for (const r of s || []) m[r.client_id] = r
     setStats(m)
@@ -28,7 +28,7 @@ export default function Clients() {
     let domain = form.domain.trim()
     if (domain && !/^https?:\/\//i.test(domain)) domain = `https://${domain}`
     const slug = form.slug || slugify(form.name)
-    const { data, error } = await supabase.from('clients').insert({
+    const { data, error } = await supabase.from('wa_clients').insert({
       name: form.name.trim(), domain, slug, model: DEFAULT_MODEL,
       allowed_domains: domain ? [new URL(domain).hostname] : [],
     }).select().single()

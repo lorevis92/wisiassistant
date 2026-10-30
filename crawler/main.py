@@ -1,7 +1,7 @@
 """
 WISI Assistant — crawler service (Crawl4AI + FastAPI), deployed on Railway/Render.
 
-Endpoints (Bearer = Supabase user JWT of the admin, verified against Supabase Auth):
+Endpoints (Bearer = Supabase user JWT, verified against Supabase Auth; the user must be in wa_admins):
   POST /map    {client_id, url}            → discovers every URL of the site (sitemap + link discovery), no content download
   POST /crawl  {client_id, urls: [...]}    → background job: fetch → markdown → chunk (heading hierarchy + anchors) → embed → Supabase
   GET  /health
@@ -51,7 +51,11 @@ async def require_admin(authorization: str = Header(default="")):
         r = await c.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SERVICE_KEY, "Authorization": f"Bearer {token}"})
     if r.status_code != 200:
         raise HTTPException(401, "Non autorizzato")
-    return r.json()
+    user = r.json()
+    # shared DB: a valid JWT is not enough, the user must be listed in wa_admins
+    if not user.get("id") or not await sb("GET", "wa_admins", params={"user_id": f"eq.{user['id']}", "select": "user_id"}):
+        raise HTTPException(403, "Accesso non autorizzato")
+    return user
 
 
 # ----------------------------------------------------------------------------- supabase helpers
@@ -67,7 +71,7 @@ async def sb(method: str, path: str, *, json: Any = None, params: dict | None = 
 
 
 async def get_client(client_id: str) -> dict:
-    rows = await sb("GET", "clients", params={"id": f"eq.{client_id}", "select": "*"})
+    rows = await sb("GET", "wa_clients", params={"id": f"eq.{client_id}", "select": "*"})
     if not rows:
         raise HTTPException(404, "Cliente non trovato")
     return rows[0]
@@ -226,7 +230,7 @@ async def discover_links(root: str, client: httpx.AsyncClient, seed: set[str]) -
 async def map_site(req: MapReq, _=Depends(require_admin)):
     client = await get_client(req.client_id)
     root = req.url if req.url.startswith("http") else f"https://{req.url}"
-    await sb("PATCH", "clients", params={"id": f"eq.{req.client_id}"}, json={"status": "mapping"})
+    await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": "mapping"})
     try:
         async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "WISI-Assistant-Crawler/1.0"}) as c:
             urls = await fetch_sitemap_urls(root, c)
@@ -237,7 +241,7 @@ async def map_site(req: MapReq, _=Depends(require_admin)):
         return {"urls": urls, "count": len(urls), "excluded": sum(1 for u in urls if not allowed_by_rules(u, client.get("include_patterns") or [], client.get("exclude_patterns") or []))}
     finally:
         prev = client["status"] if client["status"] != "mapping" else "new"
-        await sb("PATCH", "clients", params={"id": f"eq.{req.client_id}"}, json={"status": prev})
+        await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": prev})
 
 
 # ----------------------------------------------------------------------------- CRAWL
@@ -252,10 +256,10 @@ async def crawl(req: CrawlReq, bg: BackgroundTasks, _=Depends(require_admin)):
     urls = sorted({u for u in req.urls if u.startswith("http")})
     if not urls:
         raise HTTPException(400, "Nessun URL")
-    running = await sb("GET", "crawl_jobs", params={"client_id": f"eq.{req.client_id}", "status": "in.(queued,running)", "select": "id"})
+    running = await sb("GET", "wa_crawl_jobs", params={"client_id": f"eq.{req.client_id}", "status": "in.(queued,running)", "select": "id"})
     if running:
         raise HTTPException(409, "Un crawl è già in corso per questo cliente")
-    job = (await sb("POST", "crawl_jobs", json={"client_id": req.client_id, "status": "queued", "total_count": len(urls)}, prefer="return=representation"))[0]
+    job = (await sb("POST", "wa_crawl_jobs", json={"client_id": req.client_id, "status": "queued", "total_count": len(urls)}, prefer="return=representation"))[0]
     bg.add_task(run_crawl, client, job["id"], urls)
     return {"job_id": job["id"], "count": len(urls)}
 
@@ -269,8 +273,8 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
         from crawl4ai.content_filter_strategy import PruningContentFilter as PruningFilter
 
     cid = client["id"]
-    await sb("PATCH", "crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "running", "started_at": now()})
-    await sb("PATCH", "clients", params={"id": f"eq.{cid}"}, json={"status": "crawling"})
+    await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "running", "started_at": now()})
+    await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "crawling"})
     done = errors = 0
     sem = asyncio.Semaphore(CONCURRENCY)
 
@@ -292,7 +296,7 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
                 nonlocal done, errors
                 async with sem:
                     try:
-                        await sb("PATCH", "crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
+                        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
                         res = await crawler.arun(url=u, config=run_cfg)
                         if not res.success:
                             raise RuntimeError(res.error_message or "fetch failed")
@@ -308,14 +312,14 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
                     except Exception as e:  # noqa: BLE001
                         errors += 1
                         await upsert_page(cid, u, {"status": "failed", "error": str(e)[:300], "last_crawled_at": now()})
-                    await sb("PATCH", "crawl_jobs", params={"id": f"eq.{job_id}"}, json={"done_count": done, "error_count": errors})
+                    await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"done_count": done, "error_count": errors})
 
             await asyncio.gather(*(one(u) for u in urls))
-        await sb("PATCH", "crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors})
-        await sb("PATCH", "clients", params={"id": f"eq.{cid}"}, json={"status": "ready", "last_crawl_at": now()})
+        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors})
+        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "ready", "last_crawl_at": now()})
     except Exception as e:  # noqa: BLE001
-        await sb("PATCH", "crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "error": str(e)[:500]})
-        await sb("PATCH", "clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
+        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "error": str(e)[:500]})
+        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
 
 
 def extract_anchor_map(html: str) -> dict[str, str]:
@@ -338,7 +342,7 @@ def extract_anchor_map(html: str) -> dict[str, str]:
 
 
 async def upsert_page(cid: str, url: str, fields: dict) -> dict:
-    rows = await sb("POST", "pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **fields}, prefer="resolution=merge-duplicates,return=representation")
+    rows = await sb("POST", "wa_pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **fields}, prefer="resolution=merge-duplicates,return=representation")
     return rows[0]
 
 
@@ -349,7 +353,7 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
         await upsert_page(cid, url, {"title": title, "status": "empty", "chunk_count": 0, "word_count": words, "error": None, "last_crawled_at": now()})
         return
     h = hashlib.sha256(text.encode()).hexdigest()[:32]
-    existing = await sb("GET", "pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})
+    existing = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})
     if existing and existing[0].get("content_hash") == h:
         await upsert_page(cid, url, {"title": title, "status": "ok", "error": None, "last_crawled_at": now()})
         return  # unchanged → skip re-embedding (saves money)
@@ -364,9 +368,9 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
             "client_id": cid, "page_id": page["id"], "idx": i, "content": c["content"], "url": url,
             "anchor": anchor, "heading_path": c["heading_path"], "title": title, "embedding": v, "token_count": len(c["content"]) // 4,
         })
-    await sb("DELETE", "chunks", params={"page_id": f"eq.{page['id']}"})
+    await sb("DELETE", "wa_chunks", params={"page_id": f"eq.{page['id']}"})
     for i in range(0, len(rows), 50):
-        await sb("POST", "chunks", json=rows[i : i + 50])
+        await sb("POST", "wa_chunks", json=rows[i : i + 50])
     await upsert_page(cid, url, {"status": "ok", "chunk_count": len(rows), "word_count": words, "content_hash": h, "error": None, "last_crawled_at": now()})
 
 

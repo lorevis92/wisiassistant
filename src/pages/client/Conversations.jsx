@@ -18,7 +18,7 @@ export default function Conversations({ client }) {
   const [exporting, setExporting] = useState(false)
 
   const load = async () => {
-    let q = supabase.from('conversations').select('*').eq('client_id', client.id)
+    let q = supabase.from('wa_conversations').select('*').eq('client_id', client.id)
       .gte('created_at', `${from}T00:00:00`).lte('created_at', `${to}T23:59:59`).order('created_at', { ascending: false }).limit(500)
     if (channel) q = q.eq('channel', channel)
     if (status) q = q.eq('status', status)
@@ -30,14 +30,14 @@ export default function Conversations({ client }) {
 
   useEffect(() => {
     if (!active) return setMessages([])
-    supabase.from('messages').select('*').eq('conversation_id', active).order('created_at').then(({ data }) => setMessages(data || []))
+    supabase.from('wa_messages').select('*').eq('conversation_id', active).order('created_at').then(({ data }) => setMessages(data || []))
   }, [active])
 
   const exportPdf = async () => {
     if (!list?.length) return setToast('Nessuna conversazione nel periodo')
     setExporting(true)
     const ids = list.map((c) => c.id)
-    const { data: msgs } = await supabase.from('messages').select('*').in('conversation_id', ids).order('created_at')
+    const { data: msgs } = await supabase.from('wa_messages').select('*').in('conversation_id', ids).order('created_at')
     const byConv = {}
     for (const m of msgs || []) (byConv[m.conversation_id] ||= []).push(m)
     const convs = [...list].reverse().map((c) => ({ ...c, messages: byConv[c.id] || [] }))
@@ -95,7 +95,7 @@ export default function Conversations({ client }) {
                   <div className="small secondary mono">{[current.lead_email, current.channel, current.page_url].filter(Boolean).join(' · ')}</div>
                 </div>
                 <div className="row">
-                  {current.status !== 'resolved' && <button className="btn sm" onClick={async () => { await supabase.from('conversations').update({ status: 'resolved' }).eq('id', current.id); load() }}>Segna risolta</button>}
+                  {current.status !== 'resolved' && <button className="btn sm" onClick={async () => { await supabase.from('wa_conversations').update({ status: 'resolved' }).eq('id', current.id); load() }}>Segna risolta</button>}
                 </div>
               </div>
               <ChatThread messages={messages} />

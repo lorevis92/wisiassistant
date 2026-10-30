@@ -27,14 +27,14 @@ export default function ClientPage() {
   const [client, setClient] = useState(null)
 
   const reload = async () => {
-    const { data } = await supabase.from('clients').select('*').eq('id', id).single()
+    const { data } = await supabase.from('wa_clients').select('*').eq('id', id).single()
     setClient(data)
   }
   useEffect(() => { reload() }, [id])
 
   useEffect(() => {
     const ch = supabase.channel(`client-${id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'clients', filter: `id=eq.${id}` }, (p) => setClient(p.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_clients', filter: `id=eq.${id}` }, (p) => setClient(p.new))
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [id])

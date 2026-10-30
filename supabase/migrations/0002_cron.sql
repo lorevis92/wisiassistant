@@ -4,11 +4,13 @@
 --
 -- PRIMA di eseguire: sostituisci <PROJECT_REF> e <SERVICE_ROLE_KEY>.
 -- (Supabase → Project Settings → API). In alternativa salva la chiave in Vault e leggila da lì.
+--
+-- DB condiviso: i job hanno prefisso wa_ e vengono rimossi/ricreati solo quelli; i job delle altre app non vengono toccati.
 
-select cron.unschedule('wisi-assistant-reports') where exists (select 1 from cron.job where jobname = 'wisi-assistant-reports');
+select cron.unschedule('wa_reports') where exists (select 1 from cron.job where jobname = 'wa_reports');
 
 select cron.schedule(
-  'wisi-assistant-reports',
+  'wa_reports',
   '0 6 * * *',
   $$
   select net.http_post(
@@ -20,5 +22,5 @@ select cron.schedule(
 );
 
 -- Pulizia rate limit vecchi (ogni notte)
-select cron.unschedule('wisi-assistant-ratelimit-cleanup') where exists (select 1 from cron.job where jobname = 'wisi-assistant-ratelimit-cleanup');
-select cron.schedule('wisi-assistant-ratelimit-cleanup', '15 3 * * *', $$ delete from public.rate_limits where window_start < now() - interval '2 hours'; $$);
+select cron.unschedule('wa_ratelimit_cleanup') where exists (select 1 from cron.job where jobname = 'wa_ratelimit_cleanup');
+select cron.schedule('wa_ratelimit_cleanup', '15 3 * * *', $$ delete from public.wa_rate_limits where window_start < now() - interval '2 hours'; $$);
