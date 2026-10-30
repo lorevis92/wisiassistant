@@ -82,7 +82,8 @@ export async function llm(modelKey: string, messages: Msg[], opts: { temperature
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': need('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens, temperature, system, messages: chat }),
+      // recent Claude models reject `temperature` ("deprecated for this model"): never send it to Anthropic
+      body: JSON.stringify({ model, max_tokens, system, messages: chat }),
     })
     const j = await r.json()
     if (!r.ok) throw new Error(j.error?.message || 'Anthropic error')

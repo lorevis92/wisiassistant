@@ -85,7 +85,10 @@ export default function Settings({ client, reload }) {
           <div className="grid2">
             <div className="field"><label className="label">Lingua risposte</label>
               <select className="select" value={f.language} onChange={(e) => set('language', e.target.value)}>{LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}</select></div>
-            <div className="field"><label className="label">Temperatura</label><input className="input mono" type="number" step="0.1" min="0" max="1" value={f.temperature} onChange={(e) => set('temperature', e.target.value)} /></div>
+            {!f.model.startsWith('anthropic/') && (
+              <div className="field"><label className="label">Temperatura</label><input className="input mono" type="number" step="0.1" min="0" max="1" value={f.temperature} onChange={(e) => set('temperature', e.target.value)} />
+                <div className="hint">Per i modelli Claude (Anthropic) la temperatura non è usata.</div></div>
+            )}
           </div>
           <div className="field"><label className="label">Soglia di confidenza (0–1)</label><input className="input mono" type="number" step="0.05" min="0" max="1" value={f.confidence_threshold} onChange={(e) => set('confidence_threshold', e.target.value)} />
             <div className="hint">Sotto questa similarità il bot dichiara di non avere l’informazione invece di inventare, e propone il contatto umano. 0.35 è un buon punto di partenza.</div></div>
