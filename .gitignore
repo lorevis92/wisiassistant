@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+.vercel
+.DS_Store
+crawler/__pycache__
+crawler/.venv
+supabase/.temp

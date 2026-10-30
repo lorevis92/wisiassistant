@@ -1,0 +1,18 @@
+# Supabase CLI config (solo per `supabase functions deploy`). Il project_id viene impostato con `supabase link`.
+[functions.chat]
+verify_jwt = false   # widget pubblico: la function valida da sola il dominio e l'eventuale JWT admin
+
+[functions.ingest]
+verify_jwt = true
+
+[functions.generate-report]
+verify_jwt = false   # chiamata da pg_cron con service key; la function controlla il token
+
+[functions.send-report]
+verify_jwt = true
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.whatsapp-webhook]
+verify_jwt = false
