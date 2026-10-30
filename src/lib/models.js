@@ -18,6 +18,14 @@ export const MODELS = [
 export const DEFAULT_MODEL = 'anthropic/claude-haiku-5-5'
 
 export const modelKey = (m) => `${m.provider}/${m.id}`
+/** Temperature is not used by Claude (Anthropic) nor by OpenAI reasoning models (GPT-5, o-series): keep in sync with llm() in common.ts. */
+export const supportsTemperature = (key) => {
+  const [provider, ...rest] = String(key || '').split('/')
+  const id = rest.join('/')
+  if (provider === 'anthropic') return false
+  if (provider === 'openai' && ((/^gpt-5/.test(id) && !/-chat/.test(id)) || /^o\d/.test(id))) return false
+  return true
+}
 export const modelLabel = (key) => {
   const m = MODELS.find((x) => modelKey(x) === key)
   return m ? m.label : key

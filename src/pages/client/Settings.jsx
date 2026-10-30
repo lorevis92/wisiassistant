@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Toast, useToast } from '../../components/ui'
-import { MODELS, modelKey, CHANNELS, LANGS } from '../../lib/models'
+import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS } from '../../lib/models'
 
 const DEFAULT_INSTRUCTIONS = `Sei l'assistente virtuale di {{nome}}. Rispondi in modo cortese, chiaro e conciso, nella lingua in cui scrive l'utente.
 Usa SOLO le informazioni fornite nel contesto (pagine del sito e documenti del cliente). Se la risposta non è nel contesto, dillo con onestà e proponi di mettere l'utente in contatto con una persona.
@@ -85,9 +85,9 @@ export default function Settings({ client, reload }) {
           <div className="grid2">
             <div className="field"><label className="label">Lingua risposte</label>
               <select className="select" value={f.language} onChange={(e) => set('language', e.target.value)}>{LANGS.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}</select></div>
-            {!f.model.startsWith('anthropic/') && (
+            {supportsTemperature(f.model) && (
               <div className="field"><label className="label">Temperatura</label><input className="input mono" type="number" step="0.1" min="0" max="1" value={f.temperature} onChange={(e) => set('temperature', e.target.value)} />
-                <div className="hint">Per i modelli Claude (Anthropic) la temperatura non è usata.</div></div>
+                <div className="hint">Per i modelli Claude (Anthropic) e GPT-5 la temperatura non è usata.</div></div>
             )}
           </div>
           <div className="field"><label className="label">Soglia di confidenza (0–1)</label><input className="input mono" type="number" step="0.05" min="0" max="1" value={f.confidence_threshold} onChange={(e) => set('confidence_threshold', e.target.value)} />

@@ -117,11 +117,21 @@ export async function llm(modelKey: string, messages: Msg[], opts: { temperature
   const body: any = { model, messages: [...(system ? [{ role: 'system', content: system }] : []), ...chat], temperature }
   // newer OpenAI models reject max_tokens → use max_completion_tokens
   if (provider === 'openai') body.max_completion_tokens = max_tokens; else body.max_tokens = max_tokens
+  if (provider === 'openai' && isOpenAIReasoning(model)) {
+    // reasoning models reject a non-default temperature, and reasoning tokens count against
+    // max_completion_tokens: lowest effort (fast support replies) + headroom so the answer is never empty
+    delete body.temperature
+    body.reasoning_effort = /^gpt-5(-|$)/.test(model) ? 'minimal' : 'low'
+    body.max_completion_tokens = Math.max(max_tokens, 2000)
+  }
   const r = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${need(c.key)}` }, body: JSON.stringify(body) })
   const j = await r.json()
   if (!r.ok) throw new Error(j.error?.message || `${provider} error`)
   return { text: j.choices?.[0]?.message?.content || '', tokens_in: j.usage?.prompt_tokens, tokens_out: j.usage?.completion_tokens }
 }
+
+/** OpenAI reasoning models: GPT-5 family (except the non-reasoning *-chat variants) and the o-series. Keep in sync with src/lib/models.js. */
+export const isOpenAIReasoning = (model: string) => (/^gpt-5/.test(model) && !/-chat/.test(model)) || /^o\d/.test(model)
 
 // ------------------------------------------------------------------ CHUNKING (shared with manual content)
 /** Splits markdown-ish text into chunks by headings, keeping the heading path and an anchor-friendly slug. */
