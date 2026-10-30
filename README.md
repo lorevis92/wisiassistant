@@ -59,6 +59,8 @@ wisiassistant/
 
 ### 3. Frontend su Vercel
 1. Importa il repo. Framework: Vite. Build command `npm run build`, output `dist`.
+   È tutto già in `vercel.json` (`framework: vite`): Vercel lo tratta come progetto singolo. `.vercelignore` esclude `crawler/`
+   (gira su Railway/Render) e `supabase/` (deploy con la CLI Supabase).
 2. Environment Variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_CRAWLER_URL` (URL Railway).
 3. Deploy. Il widget è servito su `https://<dominio>/widget.js`.
    Ricorda: dopo aver aggiunto env var su Vercel serve un redeploy.

@@ -1,0 +1,4 @@
+# Vercel deploys only the Vite frontend (+ widget/). The crawler runs on Railway/Render,
+# Edge Functions and migrations are deployed to Supabase.
+crawler/
+supabase/
