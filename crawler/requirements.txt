@@ -1,6 +1,8 @@
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-httpx==0.27.2
-pydantic==2.9.2
-beautifulsoup4==4.12.3
+# Ranges (not exact pins) so pip can satisfy crawl4ai's own constraints.
+# crawl4ai 0.9.5 requires pydantic>=2.10, httpx>=0.27.2, beautifulsoup4~=4.12.
 crawl4ai==0.9.5
+fastapi>=0.115.5,<1
+uvicorn[standard]>=0.32.1,<1
+httpx>=0.27.2,<1
+pydantic>=2.10,<3
+beautifulsoup4>=4.12.3,<5
