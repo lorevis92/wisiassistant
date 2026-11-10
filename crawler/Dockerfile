@@ -3,7 +3,9 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# libatomic1 + libstdc++6: needed by the Node driver bundled with Playwright (it must start before
+# "playwright install --with-deps" can apt-install Chromium's own system libraries).
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libatomic1 libstdc++6 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
