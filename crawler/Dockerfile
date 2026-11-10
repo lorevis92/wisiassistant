@@ -16,7 +16,8 @@ RUN crawl4ai-setup || echo "WARNING: crawl4ai-setup failed (non-fatal)"
 
 # Fail the build early if the app or its deps can't be imported.
 COPY . .
-RUN python -c "import uvicorn, crawl4ai, main"
+# (dummy env: main.py reads SUPABASE_* at import time; real values are only set at runtime)
+RUN SUPABASE_URL=http://build SUPABASE_SERVICE_ROLE_KEY=build python -c "import uvicorn, crawl4ai, main"
 
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
