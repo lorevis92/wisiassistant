@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { supabase } from '../../lib/supabase'
-import { Toast, useToast } from '../../components/ui'
+import { supabase, callCrawler } from '../../lib/supabase'
+import { fmtDateTime } from '../../lib/utils'
+import { StatusBadge, Toast, useToast } from '../../components/ui'
 import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS } from '../../lib/models'
 
 const DEFAULT_INSTRUCTIONS = `Sei l'assistente virtuale di {{nome}}. Rispondi in modo cortese, chiaro e conciso, nella lingua in cui scrive l'utente.
@@ -20,6 +21,7 @@ export default function Settings({ client, reload }) {
     allowed_domains: (client.allowed_domains || []).join('\n'),
     widget: { color: '#E8352A', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'], ...(client.widget || {}) },
     report_frequency: client.report_frequency || 'none',
+    recrawl_frequency: client.recrawl_frequency || 'none',
     report_recipients: (client.report_recipients || []).join(', '),
     report_auto_send: !!client.report_auto_send,
     telegram_bot_token: client.telegram_bot_token || '',
@@ -46,6 +48,10 @@ export default function Settings({ client, reload }) {
     setBusy(false)
     if (error) return setToast(error.message)
     setToast('Impostazioni salvate'); reload()
+  }
+
+  const recrawlNow = async () => {
+    try { await callCrawler('/recrawl', { client_id: client.id }); setToast('Re-crawl avviato: segui l’avanzamento nella scheda Crawling') } catch (e) { setToast(e.message) }
   }
 
   const toggleChannel = (id) => set('channels', f.channels.includes(id) ? f.channels.filter((c) => c !== id) : [...f.channels, id])
@@ -138,6 +144,23 @@ export default function Settings({ client, reload }) {
             <div className="field"><label className="label">WhatsApp Phone Number ID</label><input className="input mono" value={f.whatsapp_phone_id} onChange={(e) => set('whatsapp_phone_id', e.target.value)} /></div>
             <div className="field"><label className="label">WhatsApp access token</label><input className="input mono" value={f.whatsapp_token} onChange={(e) => set('whatsapp_token', e.target.value)} />
               <div className="hint">Meta Business → WhatsApp Cloud API. Webhook: <span className="mono">{fnUrl}/whatsapp-webhook?client={client.slug}</span>. Instagram/Messenger usano lo stesso endpoint quando collegati nella Meta App.</div></div>
+          </div>
+          <div className="card">
+            <div className="card-title">Crawling</div>
+            <div className="field"><label className="label">Re-crawl automatico del sito</label>
+              <select className="select" value={f.recrawl_frequency} onChange={(e) => set('recrawl_frequency', e.target.value)}>
+                <option value="none">Nessuno</option><option value="daily">Giornaliero</option><option value="weekly">Settimanale</option><option value="monthly">Mensile</option>
+              </select>
+              <div className="hint">Ogni notte (02:30 UTC) il sistema rimappa il sito dei clienti in scadenza, rispetta le regole include/exclude, indicizza le pagine nuove, aggiorna solo quelle cambiate e disattiva quelle sparite. Documenti, FAQ e testi caricati a mano non vengono mai toccati. I clienti in pausa vengono saltati.</div>
+            </div>
+            <div className="row between wrap">
+              <span className="small secondary">
+                Ultimo re-crawl: {client.last_recrawl_at ? fmtDateTime(client.last_recrawl_at) : 'mai'}
+                {client.last_recrawl_status ? <> · <StatusBadge status={client.last_recrawl_status === 'error' ? 'failed' : client.last_recrawl_status} /></> : null}
+              </span>
+              <button className="btn sm" disabled={!client.domain} onClick={recrawlNow}>Esegui ora</button>
+            </div>
+            {client.last_recrawl_status === 'error' && client.last_recrawl_error && <div className="hint" style={{ color: 'var(--primary)' }}>{client.last_recrawl_error}</div>}
           </div>
           <div className="card">
             <div className="card-title">Report periodici</div>

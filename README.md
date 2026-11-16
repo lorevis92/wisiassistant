@@ -56,6 +56,12 @@ wisiassistant/
 2. Variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `CRAWLER_SECRET` (opzionale), `CRAWL_CONCURRENCY=4`.
 3. Settings → Networking → Generate domain. Copia l'URL (es. `https://wisiassistant-crawler.up.railway.app`).
    Render funziona uguale (Docker, root `crawler`). Il primo build scarica Chromium (~3 minuti).
+4. Re-crawl automatico: imposta `CRAWLER_SECRET` (obbligatorio per il cron), poi apri `supabase/migrations/0003_recrawl.sql`,
+   sostituisci `<CRAWLER_URL>` e `<CRAWLER_SECRET>` ed eseguilo nel SQL Editor. Ogni giorno alle 02:30 UTC il job `wa_recrawl`
+   chiama `POST /recrawl/scheduled`; la frequenza si sceglie per cliente in Impostazioni → Crawling.
+   Il re-crawl rimappa il sito, rispetta le regole include/exclude, indicizza le pagine nuove, ri-embedda solo quelle cambiate,
+   disattiva quelle sparite (stato "Sparita") e segnala quelle non più collegate. Documenti, FAQ e testi manuali non vengono toccati.
+   Se il mapping trova 0 URL o meno del 30% delle pagine già indicizzate, il re-crawl si ferma in errore senza modificare nulla.
 
 ### 3. Frontend su Vercel
 1. Importa il repo. Framework: Vite. Build command `npm run build`, output `dist`.
@@ -99,6 +105,6 @@ Crawler locale: `cd crawler && pip install -r requirements.txt && playwright ins
 WISI Assistant vive nel progetto Supabase **wisinvaders**, insieme ad altre app. Per isolarlo:
 - tutto ciò che crea ha prefisso `wa_`: tabelle (`wa_clients`, `wa_pages`, `wa_chunks`, `wa_crawl_jobs`, `wa_conversations`, `wa_messages`,
   `wa_leads`, `wa_reports`, `wa_rate_limits`, `wa_admins`), vista `wa_client_stats`, funzioni `wa_match_chunks`, `wa_check_rate_limit`,
-  `wa_is_admin`, `wa_touch_updated_at`, `wa_on_message_insert`, trigger, indici, policy, job cron (`wa_reports`, `wa_ratelimit_cleanup`)
+  `wa_is_admin`, `wa_touch_updated_at`, `wa_on_message_insert`, trigger, indici, policy, job cron (`wa_reports`, `wa_ratelimit_cleanup`, `wa_recrawl`)
   e bucket storage `wa-documents`;
 - le migration creano/sostituiscono/eliminano **solo** oggetti `wa_`: mai toccare tabelle, funzioni o policy di altre app.

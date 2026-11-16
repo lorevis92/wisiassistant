@@ -4,6 +4,8 @@ WISI Assistant — crawler service (Crawl4AI + FastAPI), deployed on Railway/Ren
 Endpoints (Bearer = Supabase user JWT, verified against Supabase Auth; the user must be in wa_admins):
   POST /map    {client_id, url}            → discovers every URL of the site (sitemap + link discovery), no content download
   POST /crawl  {client_id, urls: [...]}    → background job: fetch → markdown → chunk (heading hierarchy + anchors) → embed → Supabase
+  POST /recrawl {client_id}                → re-map + re-crawl one client now (same flow as the automatic one)
+  POST /recrawl/scheduled                  → called daily by pg_cron (Bearer CRAWLER_SECRET): re-crawls clients whose frequency is due
   GET  /health
 
 Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY, CRAWLER_SECRET (optional shared secret), PORT
@@ -18,7 +20,7 @@ import sys
 from collections import Counter
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urldefrag, urljoin, urlparse, urlunparse
 from xml.etree import ElementTree as ET
@@ -375,27 +377,37 @@ async def discover_links(root: str, client: httpx.AsyncClient, seed: set[str]) -
     return found
 
 
+async def map_urls(root: str) -> tuple[str, list[str]]:
+    """Discovers every URL of a site (sitemap + internal links). Returns (resolved root, sorted URLs)."""
+    root = root if root.startswith("http") else f"https://{root}"
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "WISI-Assistant-Crawler/1.0"}) as c:
+        # follow redirects once so every URL uses the site's real scheme + host (www vs non-www, http vs https)
+        try:
+            r0 = await c.get(root, follow_redirects=True)
+            if same_site(str(r0.url), root):
+                fu = urlparse(str(r0.url))
+                root = f"{fu.scheme}://{fu.netloc}/"
+        except Exception:
+            pass
+        urls = await fetch_sitemap_urls(root, c)
+        urls = await discover_links(root, c, urls)
+    return root, sorted(urls)
+
+
+def client_rules(client: dict) -> tuple[list[str], list[str]]:
+    return client.get("include_patterns") or [], client.get("exclude_patterns") or []
+
+
 @app.post("/map")
 async def map_site(req: MapReq, _=Depends(require_admin)):
     client = await get_client(req.client_id)
-    root = req.url if req.url.startswith("http") else f"https://{req.url}"
     await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": "mapping"})
     try:
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "WISI-Assistant-Crawler/1.0"}) as c:
-            # follow redirects once so every URL uses the site's real scheme + host (www vs non-www, http vs https)
-            try:
-                r0 = await c.get(root, follow_redirects=True)
-                if same_site(str(r0.url), root):
-                    fu = urlparse(str(r0.url))
-                    root = f"{fu.scheme}://{fu.netloc}/"
-            except Exception:
-                pass
-            urls = await fetch_sitemap_urls(root, c)
-            urls = await discover_links(root, c, urls)
+        _, urls = await map_urls(req.url)
         # All URLs are returned; the dashboard shows which ones are excluded by the saved rules
         # (so the admin can see what is being filtered and adjust the rules).
-        urls = sorted(urls)
-        return {"urls": urls, "count": len(urls), "excluded": sum(1 for u in urls if not allowed_by_rules(u, client.get("include_patterns") or [], client.get("exclude_patterns") or []))}
+        inc, exc = client_rules(client)
+        return {"urls": urls, "count": len(urls), "excluded": sum(1 for u in urls if not allowed_by_rules(u, inc, exc))}
     finally:
         prev = client["status"] if client["status"] != "mapping" else "new"
         await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": prev})
@@ -407,21 +419,63 @@ class CrawlReq(BaseModel):
     urls: list[str]
 
 
+ACTIVE_JOB = "in.(queued,mapping,running)"
+# columns added by migration 0003: if it has not been applied yet, job/client updates fall back to the base columns
+EXT_JOB_FIELDS = {"trigger", "mapped_count", "new_count", "updated_count", "unchanged_count", "removed_count", "summary"}
+EXT_CLIENT_FIELDS = {"last_recrawl_at", "last_recrawl_status", "last_recrawl_error", "last_recrawl_job_id"}
+
+
+async def sb_patch_tolerant(table: str, row_id: str, fields: dict, ext: set[str]) -> None:
+    try:
+        await sb("PATCH", table, params={"id": f"eq.{row_id}"}, json=fields)
+    except RuntimeError as e:
+        base = {k: v for k, v in fields.items() if k not in ext}
+        if base == fields or "column" not in str(e).lower() and "PGRST204" not in str(e):
+            raise
+        log.warning("%s: extended columns missing (apply migration 0003_recrawl.sql): %s", table, e)
+        if base:
+            await sb("PATCH", table, params={"id": f"eq.{row_id}"}, json=base)
+
+
+async def patch_job(job_id: str, fields: dict) -> None:
+    await sb_patch_tolerant("wa_crawl_jobs", job_id, fields, EXT_JOB_FIELDS)
+
+
+async def patch_client(cid: str, fields: dict) -> None:
+    await sb_patch_tolerant("wa_clients", cid, fields, EXT_CLIENT_FIELDS)
+
+
+async def create_job(cid: str, status: str, total: int, trigger: str) -> dict:
+    row = {"client_id": cid, "status": status, "total_count": total, "trigger": trigger}
+    try:
+        return (await sb("POST", "wa_crawl_jobs", json=row, prefer="return=representation"))[0]
+    except RuntimeError as e:
+        if "trigger" not in str(e):
+            raise
+        row.pop("trigger")
+        return (await sb("POST", "wa_crawl_jobs", json=row, prefer="return=representation"))[0]
+
+
 @app.post("/crawl")
 async def crawl(req: CrawlReq, bg: BackgroundTasks, _=Depends(require_admin)):
     client = await get_client(req.client_id)
-    urls = sorted({u for u in req.urls if u.startswith("http")})
+    urls = sorted({u for u in req.urls if u.startswith("http")})  # never manual content (wisi://…)
     if not urls:
         raise HTTPException(400, "Nessun URL")
-    running = await sb("GET", "wa_crawl_jobs", params={"client_id": f"eq.{req.client_id}", "status": "in.(queued,running)", "select": "id"})
+    running = await sb("GET", "wa_crawl_jobs", params={"client_id": f"eq.{req.client_id}", "status": ACTIVE_JOB, "select": "id"})
     if running:
         raise HTTPException(409, "Un crawl è già in corso per questo cliente")
-    job = (await sb("POST", "wa_crawl_jobs", json={"client_id": req.client_id, "status": "queued", "total_count": len(urls)}, prefer="return=representation"))[0]
+    job = await create_job(req.client_id, "queued", len(urls), "manual")
     bg.add_task(run_crawl, client, job["id"], urls)
     return {"job_id": job["id"], "count": len(urls)}
 
 
-async def run_crawl(client: dict, job_id: str, urls: list[str]):
+async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str = "manual", orphans: set[str] | None = None,
+                    extra: dict | None = None) -> dict:
+    """Fetches, cleans, chunks and embeds `urls`. Only touches site pages (kind='page'), never manual content.
+    Unchanged pages (same content hash) are not re-embedded. Pages that now return 404 / 'not found' and were
+    indexed before are disabled (status 'gone'). `orphans` = known pages no longer found by the mapping:
+    if they still load they are kept but flagged. Returns {status, error, summary, counts}."""
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
     from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
     try:
@@ -430,14 +484,19 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
         from crawl4ai.content_filter_strategy import PruningContentFilter as PruningFilter
 
     cid = client["id"]
+    orphans = orphans or set()
+    prev_status = client.get("status") or "new"
     t0 = time.time()
-    log.info("crawl START job=%s client=%s pages=%d", job_id, cid, len(urls))
-    await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "running", "started_at": now()})
+    log.info("crawl START job=%s client=%s trigger=%s pages=%d", job_id, cid, trigger, len(urls))
+    await patch_job(job_id, {"status": "running", "started_at": now(), "total_count": len(urls), **(extra or {})})
     await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "crawling"})
     done = errors = 0
+    counts: Counter[str] = Counter()  # new | updated | unchanged | empty | removed | duplicate
     reasons: Counter[str] = Counter()
     seen_canonical: dict[str, str] = {}  # canonical URL → first crawled URL in this job
     sem = asyncio.Semaphore(CONCURRENCY)
+    existing_rows = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "kind": "eq.page", "select": "id,url,status,enabled,chunk_count"}) or []
+    existing = {r["url"]: r for r in existing_rows}
 
     md_gen = DefaultMarkdownGenerator(content_filter=PruningFilter(threshold=0.45, threshold_type="dynamic", min_word_threshold=8))
     run_cfg = CrawlerRunConfig(
@@ -449,6 +508,29 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
         word_count_threshold=5,
     )
     browser_cfg = BrowserConfig(headless=True, verbose=False, text_mode=True)
+
+    def summary_text() -> str:
+        parts = [f"{counts['new']} nuove", f"{counts['updated']} aggiornate", f"{counts['unchanged']} invariate"]
+        if counts["removed"]:
+            parts.append(f"{counts['removed']} rimosse/disattivate")
+        if counts["empty"]:
+            parts.append(f"{counts['empty']} vuote")
+        if orphans:
+            parts.append(f"{counts['orphan']} non più collegate")
+        parts.append(f"{errors} errori")
+        return " · ".join(parts)
+
+    def count_fields() -> dict:
+        return {"new_count": counts["new"], "updated_count": counts["updated"], "unchanged_count": counts["unchanged"],
+                "removed_count": counts["removed"], "summary": summary_text()}
+
+    async def gone(url: str, title: str, reason: str) -> None:
+        """A previously indexed page that disappeared: disable it and drop its chunks (row kept for visibility)."""
+        page = await upsert_page(cid, url, {"title": title or None, "status": "gone", "enabled": False, "chunk_count": 0, "content_hash": None,
+                                            "error": f"Sparita dal sito: {reason}"[:300], "last_crawled_at": now()})
+        await sb("DELETE", "wa_chunks", params={"page_id": f"eq.{page['id']}"})
+        counts["removed"] += 1
+        log.info("crawl page GONE job=%s url=%s reason=%s", job_id, url, reason)
 
     try:
         async with AsyncWebCrawler(config=browser_cfg) as crawler:
@@ -462,10 +544,13 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
 
             async def crawl_one(u: str):
                 nonlocal done, errors
+                prev = existing.get(u)
+                was_indexed = bool(prev and (prev.get("status") in ("ok", "pending") or (prev.get("chunk_count") or 0) > 0))
                 try:
                     await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
                     res = await crawler.arun(url=u, config=run_cfg)
-                    if not res.success:
+                    status_code = getattr(res, "status_code", None)
+                    if not res.success and status_code not in (404, 410):
                         raise RuntimeError(res.error_message or "fetch failed")
                     md_obj = res.markdown
                     # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str
@@ -473,25 +558,40 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
                     raw = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
                     md = fit if fit and len(fit) > 200 else raw
                     title = (res.metadata or {}).get("title") or ""
+                    not_found = looks_not_found(title, md, status_code)
+                    if not_found:
+                        if was_indexed:
+                            await gone(u, title, not_found)
+                        else:
+                            log.info("crawl page EMPTY job=%s url=%s reason=%s", job_id, u, not_found)
+                            await mark_empty(cid, u, title, len(md.split()), not_found)
+                            counts["empty"] += 1
+                        done += 1
+                        return
                     final_url = getattr(res, "redirected_url", None) or u
                     page_url = canonical_url(res.html or "", final_url) or normalize(final_url, final_url, site=u) or u
                     if page_url != u:
                         log.info("crawl canonical job=%s %s -> %s", job_id, u, page_url)
                         # the old row stored under the non-canonical URL is a duplicate: drop it (chunks cascade)
-                        await sb("DELETE", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{u}", "kind": "eq.page"})
+                        if prev:
+                            await sb("DELETE", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{u}", "kind": "eq.page"})
+                            counts["removed"] += 1
                     if page_url in seen_canonical:
                         log.info("crawl duplicate job=%s %s is the same page as %s, skipped", job_id, u, seen_canonical[page_url])
+                        counts["duplicate"] += 1
                         done += 1
                         return
                     seen_canonical[page_url] = u
-                    not_found = looks_not_found(title, md, getattr(res, "status_code", None))
-                    if not_found:
-                        log.info("crawl page EMPTY job=%s url=%s reason=%s", job_id, page_url, not_found)
-                        await mark_empty(cid, page_url, title, len(md.split()), not_found)
-                        done += 1
-                        return
                     anchors = extract_anchor_map(res.html or "")
-                    await index_page(cid, page_url, title, md, anchors)
+                    outcome = await index_page(cid, page_url, title, md, anchors)
+                    counts[outcome] += 1
+                    target = existing.get(page_url)
+                    if target and target.get("status") == "gone" and outcome != "empty":
+                        # it had disappeared and is back: re-enable it (only pages the crawler itself disabled)
+                        await upsert_page(cid, page_url, {"enabled": True})
+                    if u in orphans and page_url == u:
+                        counts["orphan"] += 1
+                        await upsert_page(cid, u, {"error": "Non più collegata dal sito (non trovata nel mapping), ma ancora online"})
                     done += 1
                 except Exception as e:  # noqa: BLE001
                     errors += 1
@@ -505,21 +605,138 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
 
             await asyncio.gather(*(one(u) for u in urls))
         elapsed = time.time() - t0
+        restore = "paused" if prev_status == "paused" else "ready"
         if done == 0 and errors > 0:
             top, n = reasons.most_common(1)[0] if reasons else ("errore sconosciuto", errors)
             msg = f"Tutte le {errors} pagine sono fallite. Motivo principale ({n}/{errors}): {top}"
             log.error("crawl END job=%s status=error done=0 errors=%d in %.1fs: %s", job_id, errors, elapsed, msg)
-            await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, "error": msg[:500]})
-            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
-            return
-        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors})
-        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "ready", "last_crawl_at": now()})
-        log.info("crawl END job=%s status=done done=%d errors=%d in %.1fs%s", job_id, done, errors, elapsed,
+            await patch_job(job_id, {"status": "error", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, "error": msg[:500], **count_fields()})
+            # automatic re-crawls keep the bot running on the previous content; manual crawls flag the client
+            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error" if trigger == "manual" else (prev_status if prev_status not in ("crawling", "mapping") else restore)})
+            return {"status": "error", "error": msg, "summary": summary_text()}
+        await patch_job(job_id, {"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, **count_fields()})
+        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": restore, "last_crawl_at": now()})
+        log.info("crawl END job=%s status=done %s in %.1fs%s", job_id, summary_text(), elapsed,
                  f" (top error: {reasons.most_common(1)[0][0]})" if reasons else "")
+        return {"status": "done", "error": None, "summary": summary_text()}
     except Exception as e:  # noqa: BLE001
+        msg = (str(e) or type(e).__name__)[:500]
         log.exception("crawl END job=%s status=error (crash) done=%d errors=%d in %.1fs", job_id, done, errors, time.time() - t0)
-        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "current_url": None, "error": (str(e) or type(e).__name__)[:500]})
-        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
+        await patch_job(job_id, {"status": "error", "finished_at": now(), "current_url": None, "error": msg, **count_fields()})
+        await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error" if trigger == "manual" else ("paused" if prev_status == "paused" else "ready")})
+        return {"status": "error", "error": msg, "summary": summary_text()}
+
+
+# ----------------------------------------------------------------------------- AUTOMATIC RE-CRAWL
+RECRAWL_INTERVAL = {  # small margin so a daily cron at a fixed hour never skips a run
+    "daily": timedelta(hours=22),
+    "weekly": timedelta(days=7) - timedelta(hours=2),
+    "monthly": timedelta(days=30) - timedelta(hours=2),
+}
+_recrawl_lock = asyncio.Lock()
+
+
+def recrawl_due(c: dict, at: datetime) -> bool:
+    interval = RECRAWL_INTERVAL.get(c.get("recrawl_frequency") or "none")
+    if not interval or c.get("status") == "paused" or not c.get("domain"):
+        return False
+    last = c.get("last_recrawl_at")
+    if not last:
+        return True
+    try:
+        return at - datetime.fromisoformat(str(last).replace("Z", "+00:00")) >= interval
+    except ValueError:
+        return True
+
+
+async def recrawl_client(cid: str, trigger: str = "scheduled") -> dict:
+    """Re-maps the site, applies include/exclude rules, crawls new + known pages (unchanged ones are not re-embedded),
+    disables pages that disappeared. Records the run in wa_crawl_jobs and the outcome on the client."""
+    client = await get_client(cid)
+    t0 = time.time()
+    await patch_client(cid, {"last_recrawl_at": now(), "last_recrawl_status": "running", "last_recrawl_error": None})
+    running = await sb("GET", "wa_crawl_jobs", params={"client_id": f"eq.{cid}", "status": ACTIVE_JOB, "select": "id"})
+    if running:
+        job = await create_job(cid, "skipped", 0, trigger)
+        msg = "Saltato: un altro crawl era già in corso"
+        await patch_job(job["id"], {"finished_at": now(), "error": msg})
+        await patch_client(cid, {"last_recrawl_status": "skipped", "last_recrawl_error": msg, "last_recrawl_job_id": job["id"]})
+        log.info("recrawl SKIPPED client=%s: %s", cid, msg)
+        return {"status": "skipped", "error": msg}
+
+    job = await create_job(cid, "mapping", 0, trigger)
+    await patch_job(job["id"], {"started_at": now()})
+    await patch_client(cid, {"last_recrawl_job_id": job["id"]})
+    log.info("recrawl START client=%s (%s) job=%s trigger=%s domain=%s", cid, client.get("name"), job["id"], trigger, client.get("domain"))
+    try:
+        inc, exc = client_rules(client)
+        root, mapped = await map_urls(client["domain"])
+        allowed = [u for u in mapped if allowed_by_rules(u, inc, exc)]
+        pages = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "kind": "eq.page", "select": "url,status,enabled"}) or []
+        known = [p for p in pages if p["url"].startswith("http") and allowed_by_rules(p["url"], inc, exc)]
+        live_known = [p for p in known if p.get("status") in ("ok", "pending", "empty", "failed")]
+        mapped_set = set(allowed)
+        orphans = {p["url"] for p in live_known if p["url"] not in mapped_set}
+        log.info("recrawl MAP client=%s root=%s found=%d allowed=%d known=%d not_in_map=%d", cid, root, len(mapped), len(allowed), len(known), len(orphans))
+        if not allowed:
+            raise RuntimeError(f"Mapping vuoto: nessun URL trovato su {root} (sito irraggiungibile o regole troppo restrittive). Nessuna pagina modificata.")
+        ok_known = sum(1 for p in live_known if p.get("status") == "ok")
+        if ok_known >= 10 and len(allowed) < 0.3 * ok_known:
+            raise RuntimeError(f"Mapping sospetto: trovati solo {len(allowed)} URL contro {ok_known} pagine indicizzate (sito in errore o bloccato?). Nessuna pagina modificata.")
+        urls = sorted(mapped_set | orphans)
+        result = await run_crawl(client, job["id"], urls, trigger=trigger, orphans=orphans, extra={"mapped_count": len(allowed)})
+    except Exception as e:  # noqa: BLE001
+        msg = (str(e) or type(e).__name__)[:500]
+        log.error("recrawl FAILED client=%s job=%s: %s", cid, job["id"], msg)
+        await patch_job(job["id"], {"status": "error", "finished_at": now(), "current_url": None, "error": msg})
+        result = {"status": "error", "error": msg}
+    await patch_client(cid, {"last_recrawl_status": result["status"], "last_recrawl_error": result.get("error")})
+    log.info("recrawl END client=%s job=%s status=%s in %.1fs %s", cid, job["id"], result["status"], time.time() - t0, result.get("summary") or result.get("error") or "")
+    return result
+
+
+async def run_scheduled_recrawls(ids: list[str]) -> None:
+    async with _recrawl_lock:  # one client at a time: a headless browser per site is heavy
+        log.info("scheduled recrawl START clients=%d", len(ids))
+        outcome: Counter[str] = Counter()
+        for cid in ids:
+            try:
+                outcome[(await recrawl_client(cid, "scheduled"))["status"]] += 1
+            except Exception:  # noqa: BLE001
+                outcome["error"] += 1
+                log.exception("scheduled recrawl crashed client=%s", cid)
+        log.info("scheduled recrawl END %s", dict(outcome))
+
+
+class RecrawlReq(BaseModel):
+    client_id: str
+
+
+@app.post("/recrawl/scheduled")
+async def recrawl_scheduled(bg: BackgroundTasks, _=Depends(require_admin)):
+    """Called daily by pg_cron (job wa_recrawl): re-crawls every client whose frequency is due."""
+    if _recrawl_lock.locked():
+        log.info("scheduled recrawl: previous run still in progress, skipping")
+        return {"status": "already_running"}
+    clients = await sb("GET", "wa_clients", params={"recrawl_frequency": "neq.none", "select": "id,name,domain,status,recrawl_frequency,last_recrawl_at"}) or []
+    at = datetime.now(timezone.utc)
+    due = [c for c in clients if recrawl_due(c, at)]
+    log.info("scheduled recrawl check: %d clients with frequency, %d due: %s", len(clients), len(due), ", ".join(c.get("name") or c["id"] for c in due))
+    if due:
+        bg.add_task(run_scheduled_recrawls, [c["id"] for c in due])
+    return {"status": "started" if due else "nothing_due", "due": [{"id": c["id"], "name": c.get("name")} for c in due]}
+
+
+@app.post("/recrawl")
+async def recrawl_now(req: RecrawlReq, bg: BackgroundTasks, _=Depends(require_admin)):
+    """'Run now' button: same flow as the automatic re-crawl, for one client."""
+    client = await get_client(req.client_id)
+    if not client.get("domain"):
+        raise HTTPException(400, "Il cliente non ha un sito principale impostato")
+    if await sb("GET", "wa_crawl_jobs", params={"client_id": f"eq.{req.client_id}", "status": ACTIVE_JOB, "select": "id"}):
+        raise HTTPException(409, "Un crawl è già in corso per questo cliente")
+    bg.add_task(recrawl_client, req.client_id, "manual_recrawl")
+    return {"status": "started"}
 
 
 def extract_anchor_map(html: str) -> dict[str, str]:
@@ -542,6 +759,8 @@ def extract_anchor_map(html: str) -> dict[str, str]:
 
 
 async def upsert_page(cid: str, url: str, fields: dict) -> dict:
+    if not url.startswith("http"):  # safety net: manual documents/FAQ/texts (wisi://…) are never written by the crawler
+        raise RuntimeError(f"URL non valido per il crawler: {url[:80]}")
     rows = await sb("POST", "wa_pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **fields}, prefer="resolution=merge-duplicates,return=representation")
     return rows[0]
 
@@ -552,17 +771,18 @@ async def mark_empty(cid: str, url: str, title: str, words: int, reason: str | N
     await sb("DELETE", "wa_chunks", params={"page_id": f"eq.{page['id']}"})
 
 
-async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str, str]):
+async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str, str]) -> str:
+    """Returns the outcome: new | updated | unchanged | empty."""
     text = (md or "").strip()
     words = len(text.split())
     if words < 20:
         await mark_empty(cid, url, title, words, None)
-        return
+        return "empty"
     h = hashlib.sha256(text.encode()).hexdigest()[:32]
     existing = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})
     if existing and existing[0].get("content_hash") == h:
         await upsert_page(cid, url, {"title": title, "status": "ok", "error": None, "last_crawled_at": now()})
-        return  # unchanged → skip re-embedding (saves money)
+        return "unchanged"  # same content fingerprint → skip re-embedding (saves money)
 
     page = await upsert_page(cid, url, {"title": title, "status": "pending", "error": None})
     chunks = chunk_markdown(text, title=title, max_chars=1400)
@@ -578,6 +798,7 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
     for i in range(0, len(rows), 50):
         await sb("POST", "wa_chunks", json=rows[i : i + 50])
     await upsert_page(cid, url, {"status": "ok", "chunk_count": len(rows), "word_count": words, "content_hash": h, "error": None, "last_crawled_at": now()})
+    return "updated" if existing and existing[0].get("content_hash") else "new"
 
 
 def now() -> str:

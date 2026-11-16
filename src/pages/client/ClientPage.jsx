@@ -57,6 +57,16 @@ export default function ClientPage() {
         </div>
       </div>
 
+      {client.last_recrawl_status === 'error' && (
+        <div className="card tight row between wrap" style={{ marginBottom: 16, borderColor: 'var(--primary)' }}>
+          <span className="small">
+            <StatusBadge status="failed" /> <b>Re-crawl automatico fallito</b>{client.last_recrawl_at ? ` il ${new Date(client.last_recrawl_at).toLocaleString('it-CH')}` : ''}: {client.last_recrawl_error || 'errore sconosciuto'}
+            <span className="secondary"> · Il bot continua a usare i contenuti indicizzati in precedenza.</span>
+          </span>
+          <NavLink className="btn sm" to={`/clients/${id}/crawling`}>Vedi storico</NavLink>
+        </div>
+      )}
+
       <div className="tabs" style={{ marginBottom: 20, flexWrap: 'wrap' }}>
         {TABS.map(([path, label]) => (
           <NavLink key={path} to={`/clients/${id}/${path}`} end={path === ''} className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>{label}</NavLink>

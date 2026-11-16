@@ -27,6 +27,7 @@ export default function Crawling({ client, reload }) {
         <RulesEditor client={client} reload={reload} setToast={setToast} />
       </div>
       {tab === 'pages' ? <IndexedPages client={client} setToast={setToast} /> : <Discover client={client} reload={reload} setToast={setToast} />}
+      <CrawlHistory client={client} />
     </div>
   )
 }
@@ -147,8 +148,8 @@ function Discover({ client, reload, setToast }) {
         <div className="hint">Il mapping legge sitemap e link interni senza scaricare i contenuti: è veloce anche su siti con migliaia di pagine. Le pagine già indicizzate non vengono riselezionate.</div>
       </div>
 
-      {job && (job.status === 'running' || job.status === 'queued') && <JobProgress job={job} />}
-      {job && job.status === 'done' && <div className="card tight row between"><span>Ultimo crawl: <b>{job.done_count}</b> pagine ok · {job.error_count} errori · {fmtDateTime(job.finished_at)}</span><StatusBadge status="ok" /></div>}
+      {job && ['running', 'queued', 'mapping'].includes(job.status) && <JobProgress job={job} />}
+      {job && job.status === 'done' && <div className="card tight row between"><span>Ultimo crawl: {job.summary || <><b>{job.done_count}</b> pagine ok · {job.error_count} errori</>} · {fmtDateTime(job.finished_at)}</span><StatusBadge status="ok" /></div>}
       {job && job.status === 'error' && <div className="card tight row between"><span>Errore crawl: {job.error}</span><StatusBadge status="failed" /></div>}
 
       {urls.length > 0 && (
@@ -204,7 +205,7 @@ function Discover({ client, reload, setToast }) {
           </div>
           <div className="row between" style={{ marginTop: 12 }}>
             <span className="small secondary">{visible.length} visibili · {urls.length} totali · <b>{selected.size}</b> selezionati</span>
-            <button className="btn primary" disabled={!selected.size || job?.status === 'running'} onClick={runCrawl}>3 · Crawla {selected.size} pagine</button>
+            <button className="btn primary" disabled={!selected.size || ['running', 'queued', 'mapping'].includes(job?.status)} onClick={runCrawl}>3 · Crawla {selected.size} pagine</button>
           </div>
         </div>
       )}
@@ -217,7 +218,7 @@ function JobProgress({ job }) {
   return (
     <div className="card tight">
       <div className="row between" style={{ marginBottom: 8 }}>
-        <span><StatusBadge status="crawling" /> <span className="mono small">{job.done_count + job.error_count}/{job.total_count}</span> · {job.current_url ? <span className="mono small secondary">{job.current_url}</span> : null}</span>
+        <span><StatusBadge status={job.status === 'mapping' ? 'mapping' : 'crawling'} />{job.trigger && job.trigger !== 'manual' ? <span className="small secondary"> re-crawl {job.trigger === 'scheduled' ? 'automatico' : 'manuale'} · </span> : ' '}<span className="mono small">{job.done_count + job.error_count}/{job.total_count}</span> · {job.current_url ? <span className="mono small secondary">{job.current_url}</span> : null}</span>
         <span className="mono small">{pct}%</span>
       </div>
       <div className="progress"><div style={{ width: `${pct}%` }} /></div>
@@ -235,7 +236,7 @@ function IndexedPages({ client, setToast }) {
   const [onlyStale, setOnlyStale] = useState(false)
 
   const load = async () => {
-    const { data } = await supabase.from('wa_pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).order('url')
+    const { data } = await supabase.from('wa_pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).eq('kind', 'page').order('url')
     setPages(data || [])
   }
   useEffect(() => { load() }, [client.id])
@@ -345,7 +346,7 @@ function IndexedPages({ client, setToast }) {
                     <a className="mono truncate" href={p.url} target="_blank" rel="noopener" style={{ maxWidth: 520, color: 'var(--text)' }}>{p.url}</a>
                     <div className="small secondary truncate" style={{ maxWidth: 520 }}>{staleById[p.id] ? <><StaleBadge year={staleById[p.id]} />{' '}</> : null}{p.title || ''}{p.error ? ` · ${p.error}` : ''}</div>
                   </td>
-                  <td>{p.enabled ? <StatusBadge status={p.status} /> : <span className="badge muted">Disattiva</span>}</td>
+                  <td>{p.enabled ? <StatusBadge status={p.status} /> : p.status === 'gone' ? <StatusBadge status="gone" /> : <span className="badge muted">Disattiva</span>}</td>
                   <td className="mono">{p.chunk_count || 0}</td>
                   <td className="mono">{p.word_count || 0}</td>
                   <td className="mono small">{fmtDateTime(p.last_crawled_at)}</td>
@@ -356,6 +357,48 @@ function IndexedPages({ client, setToast }) {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------ CRAWL HISTORY ------------------------------ */
+const TRIGGER_LABEL = { manual: 'Manuale', scheduled: 'Automatico', manual_recrawl: 'Re-crawl manuale' }
+
+function CrawlHistory({ client }) {
+  const [jobs, setJobs] = useState(null)
+  const load = () => supabase.from('wa_crawl_jobs').select('*').eq('client_id', client.id).order('created_at', { ascending: false }).limit(20).then(({ data }) => setJobs(data || []))
+  useEffect(() => { load() }, [client.id])
+  useEffect(() => {
+    const ch = supabase.channel(`jobs-history-${client.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_crawl_jobs', filter: `client_id=eq.${client.id}` }, (p) => {
+        if (p.eventType === 'INSERT' || ['done', 'error', 'skipped'].includes(p.new?.status)) load()
+      }).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [client.id])
+
+  if (!jobs || !jobs.length) return null
+  return (
+    <div className="card">
+      <div className="card-title">Storico esecuzioni</div>
+      <div style={{ maxHeight: 320, overflow: 'auto' }}>
+        <table className="table">
+          <thead><tr><th>Avvio</th><th>Tipo</th><th>Esito</th><th>Dettaglio</th></tr></thead>
+          <tbody>
+            {jobs.map((j) => (
+              <tr key={j.id}>
+                <td className="mono small">{fmtDateTime(j.started_at || j.created_at)}</td>
+                <td className="small">{TRIGGER_LABEL[j.trigger] || 'Manuale'}</td>
+                <td>{j.status === 'error' ? <StatusBadge status="failed" /> : j.status === 'done' ? <StatusBadge status="ok" /> : <StatusBadge status={j.status} />}</td>
+                <td className="small">
+                  {j.summary || (j.status === 'done' ? `${j.done_count} ok · ${j.error_count} errori` : '')}
+                  {j.mapped_count != null ? <span className="secondary"> · {j.mapped_count} URL mappati</span> : null}
+                  {j.error ? <div style={{ color: j.status === 'error' ? 'var(--primary)' : 'var(--textSecondary)' }}>{j.error}</div> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
