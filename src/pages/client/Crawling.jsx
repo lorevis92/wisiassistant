@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase, callCrawler } from '../../lib/supabase'
 import { StatusBadge, Toast, useToast, Modal } from '../../components/ui'
-import { fmtDateTime, matchesPattern, urlPathPrefixes } from '../../lib/utils'
+import { fmtDateTime, matchesPattern, staleYear, urlPathPrefixes } from '../../lib/utils'
+
+const StaleBadge = ({ year }) => (year ? <span className="badge yellow" title={`Anno ${year} nel titolo o nell’URL: la pagina potrebbe essere obsoleta`}>⚠ {year}</span> : null)
 
 /**
  * Flow:
@@ -101,6 +103,7 @@ function Discover({ client, reload, setToast }) {
   }, [urls, q, prefix])
 
   const prefixes = useMemo(() => urlPathPrefixes(urls), [urls])
+  const staleUrls = useMemo(() => urls.filter((u) => staleYear(u)), [urls])
 
   const runMap = async () => {
     setMapping(true); setUrls([]); setSelected(new Set())
@@ -161,6 +164,7 @@ function Discover({ client, reload, setToast }) {
             <button className="btn sm" onClick={() => selectVisible(true)}>Seleziona visibili</button>
             <button className="btn sm" onClick={() => selectVisible(false)}>Deseleziona visibili</button>
             {prefix && <button className="btn sm danger" onClick={() => { excludePrefix(prefix.replace(/\*$/, '')); setPrefix('') }}>Escludi gruppo {prefix}</button>}
+            {staleUrls.length > 0 && <button className="btn sm" title="URL con un anno ormai passato (es. offerte o eventi vecchi)" onClick={() => { const s = new Set(selected); staleUrls.forEach((u) => s.delete(u)); setSelected(s) }}>⚠ Deseleziona {staleUrls.length} URL vecchi</button>}
           </div>
 
           <div className="row wrap" style={{ marginBottom: 10 }}>
@@ -183,7 +187,7 @@ function Discover({ client, reload, setToast }) {
 
           <div style={{ maxHeight: 440, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>
             <table className="table">
-              <thead><tr><th style={{ width: 30 }}></th><th>URL</th><th style={{ width: 110 }}>Stato</th></tr></thead>
+              <thead><tr><th style={{ width: 30 }}></th><th>URL</th><th style={{ width: 150 }}>Stato</th></tr></thead>
               <tbody>
                 {visible.slice(0, 2000).map((u) => {
                   const ex = excluded(u); const idx = indexed.has(u)
@@ -191,7 +195,7 @@ function Discover({ client, reload, setToast }) {
                     <tr key={u} style={{ opacity: ex ? 0.45 : 1 }}>
                       <td><input type="checkbox" className="checkbox" checked={selected.has(u)} onChange={() => toggle(u)} /></td>
                       <td className="mono"><span className="truncate" style={{ maxWidth: 700 }}>{u}</span></td>
-                      <td>{ex ? <span className="badge muted">Escluso</span> : idx ? <span className="badge green">Indicizzato</span> : <span className="badge">Nuovo</span>}</td>
+                      <td className="row" style={{ gap: 4 }}>{ex ? <span className="badge muted">Escluso</span> : idx ? <span className="badge green">Indicizzato</span> : <span className="badge">Nuovo</span>}<StaleBadge year={staleYear(u)} /></td>
                     </tr>
                   )
                 })}
@@ -228,6 +232,7 @@ function IndexedPages({ client, setToast }) {
   const [prefix, setPrefix] = useState('')
   const [sel, setSel] = useState(new Set())
   const [sort, setSort] = useState('url')
+  const [onlyStale, setOnlyStale] = useState(false)
 
   const load = async () => {
     const { data } = await supabase.from('wa_pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).order('url')
@@ -243,13 +248,19 @@ function IndexedPages({ client, setToast }) {
 
   const urls = useMemo(() => (pages || []).map((p) => p.url), [pages])
   const prefixes = useMemo(() => urlPathPrefixes(urls), [urls])
+  const staleById = useMemo(() => {
+    const m = {}
+    for (const p of pages || []) { const y = staleYear(p.url, p.title); if (y) m[p.id] = y }
+    return m
+  }, [pages])
+  const staleActive = (pages || []).filter((p) => staleById[p.id] && p.enabled)
   const visible = useMemo(() => {
     const ql = q.toLowerCase()
-    let list = (pages || []).filter((p) => (!ql || p.url.toLowerCase().includes(ql) || (p.title || '').toLowerCase().includes(ql)) && (!prefix || matchesPattern(p.url, prefix)))
+    let list = (pages || []).filter((p) => (!ql || p.url.toLowerCase().includes(ql) || (p.title || '').toLowerCase().includes(ql)) && (!prefix || matchesPattern(p.url, prefix)) && (!onlyStale || staleById[p.id]))
     if (sort === 'chunks') list = [...list].sort((a, b) => (b.chunk_count || 0) - (a.chunk_count || 0))
     if (sort === 'date') list = [...list].sort((a, b) => new Date(b.last_crawled_at || 0) - new Date(a.last_crawled_at || 0))
     return list
-  }, [pages, q, prefix, sort])
+  }, [pages, q, prefix, sort, onlyStale, staleById])
 
   const toggle = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
   const ids = () => Array.from(sel)
@@ -298,6 +309,17 @@ function IndexedPages({ client, setToast }) {
         <span className="small secondary">{(pages || []).length} pagine · {totalChunks} chunk</span>
       </div>
 
+      {(staleActive.length > 0 || onlyStale) && (
+        <div className="card tight row between wrap" style={{ marginBottom: 10, borderColor: 'var(--yellow, #d4a017)' }}>
+          <span className="small">⚠ <b>{staleActive.length}</b> pagine attive sembrano vecchie (anno ≤ {new Date().getFullYear() - 2} nel titolo o nell’URL, es. offerte o eventi passati).</span>
+          <span className="row wrap" style={{ gap: 6 }}>
+            <button className="btn sm" onClick={() => setOnlyStale(!onlyStale)}>{onlyStale ? 'Mostra tutte' : 'Mostra solo queste'}</button>
+            <button className="btn sm" disabled={!staleActive.length} onClick={() => setSel(new Set(staleActive.map((p) => p.id)))}>Seleziona</button>
+            <button className="btn sm danger" disabled={!staleActive.length} onClick={() => { if (confirm(`Disattivare ${staleActive.length} pagine vecchie?`)) setEnabled(staleActive.map((p) => p.id), false) }}>Disattiva tutte</button>
+          </span>
+        </div>
+      )}
+
       <div className="row wrap" style={{ marginBottom: 10 }}>
         <button className="btn sm" onClick={() => setSel(new Set(visible.map((p) => p.id)))}>Seleziona visibili</button>
         <button className="btn sm" onClick={() => setSel(new Set())}>Nessuno</button>
@@ -321,7 +343,7 @@ function IndexedPages({ client, setToast }) {
                   <td><input type="checkbox" className="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} /></td>
                   <td>
                     <a className="mono truncate" href={p.url} target="_blank" rel="noopener" style={{ maxWidth: 520, color: 'var(--text)' }}>{p.url}</a>
-                    <div className="small secondary truncate" style={{ maxWidth: 520 }}>{p.title || ''}{p.error ? ` · ${p.error}` : ''}</div>
+                    <div className="small secondary truncate" style={{ maxWidth: 520 }}>{staleById[p.id] ? <><StaleBadge year={staleById[p.id]} />{' '}</> : null}{p.title || ''}{p.error ? ` · ${p.error}` : ''}</div>
                   </td>
                   <td>{p.enabled ? <StatusBadge status={p.status} /> : <span className="badge muted">Disattiva</span>}</td>
                   <td className="mono">{p.chunk_count || 0}</td>

@@ -20,7 +20,7 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import parse_qsl, unquote, urlencode, urldefrag, urljoin, urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -187,27 +187,113 @@ SKIP_EXT = re.compile(r"\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|zip|ra
 SKIP_PATH = re.compile(r"/(wp-admin|wp-json|wp-login|cart|checkout|account|login|logout|feed|xmlrpc\.php|cdn-cgi)(/|$)", re.I)
 
 
-def normalize(url: str, base: str) -> str | None:
+# tracking / session params that never change the content of a page
+TRACKING_PARAM = re.compile(
+    r"^(utm_\w*|_gl|_ga|_gac|_hsenc|_hsmi|__hs\w*|hsctatracking|gclid|gclsrc|dclid|gbraid|wbraid|fbclid|msclkid|yclid|"
+    r"mc_cid|mc_eid|igshid|srsltid|_kx|ref|ref_src|referrer|sessionid|phpsessid|jsessionid|replytocom)$",
+    re.I,
+)
+# characters that never appear in a clean URL (spaces, quotes, broken HTML like `/" target=`)
+DIRTY_URL = re.compile(r"[\s\"'<>{}|\\^`]")
+# "www.site.it/fr/offres" or "site.it/page" written without scheme
+DOMAIN_LIKE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?::\d+)?(?:[/?#]|$)", re.I)
+HAS_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
+
+
+def _bare_host(h: str | None) -> str:
+    return (h or "").lower().split(":")[0].removeprefix("www.")
+
+
+def normalize(url: str, base: str, site: str | None = None) -> str | None:
+    """Cleans a URL found in a sitemap/href/canonical. With `site`, same-site URLs get the site's scheme+host
+    (so http/https and www/non-www variants collapse into one URL)."""
     try:
-        u = urljoin(base, url.strip())
-        u, _ = urldefrag(u)
-        p = urlparse(u)
-        if p.scheme not in ("http", "https"):
+        raw = (url or "").strip()
+        if not raw or DIRTY_URL.search(raw):
             return None
+        # "www.hotel.it/fr/offres" in an href is an absolute URL written without scheme, not a relative path
+        if not raw.startswith(("/", ".", "?", "#")) and not raw.lower().startswith(("http://", "https://")):
+            host_part = re.split(r"[/?#]", raw, maxsplit=1)[0].lower()
+            site_host = _bare_host(urlparse(site or base).hostname)
+            if DOMAIN_LIKE.match(raw) and (host_part.startswith("www.") or _bare_host(host_part) == site_host):
+                raw = "https://" + raw
+            elif HAS_SCHEME.match(raw) and not raw.lower().startswith(("http:", "https:")):
+                return None  # mailto:, tel:, javascript:, data:, …
+        u, _ = urldefrag(urljoin(base, raw))
+        p = urlparse(u)
+        if p.scheme not in ("http", "https") or not p.hostname:
+            return None
+        if DIRTY_URL.search(unquote(p.path)) or DIRTY_URL.search(unquote(p.query)):
+            return None  # encoded spaces/quotes: "%20target=" and similar garbage
         if SKIP_EXT.search(p.path) or SKIP_PATH.search(p.path):
             return None
-        # drop tracking params
-        q = "&".join(x for x in p.query.split("&") if x and not re.match(r"^(utm_|fbclid|gclid|ref=|sessionid)", x, re.I))
-        u = p._replace(query=q, fragment="").geturl()
-        return u.rstrip("/") if p.path not in ("", "/") else u
+        scheme, host = p.scheme, p.hostname.lower()
+        port = f":{p.port}" if p.port and p.port not in (80, 443) else ""
+        if site and same_site(u, site):
+            sp = urlparse(site)
+            scheme, host, port = sp.scheme or scheme, (sp.hostname or host).lower(), f":{sp.port}" if sp.port and sp.port not in (80, 443) else ""
+        q = urlencode(sorted((k, v) for k, v in parse_qsl(p.query, keep_blank_values=False) if not TRACKING_PARAM.match(k)), doseq=True)
+        path = re.sub(r"/{2,}", "/", p.path or "/")
+        if path != "/":
+            path = path.rstrip("/") or "/"
+        return urlunparse((scheme, host + port, path, "", q, ""))
     except Exception:
         return None
 
 
 def same_site(u: str, root: str) -> bool:
-    a, b = urlparse(u).hostname or "", urlparse(root).hostname or ""
-    a, b = a.lower().removeprefix("www."), b.lower().removeprefix("www.")
-    return a == b
+    return _bare_host(urlparse(u).hostname) == _bare_host(urlparse(root).hostname)
+
+
+def canonical_url(html: str, page_url: str) -> str | None:
+    """Same-site <link rel="canonical"> of a page, normalized; None if missing or unusable."""
+    if not html:
+        return None
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        for link in soup.find_all("link", href=True):
+            rel = link.get("rel") or []
+            rel = rel if isinstance(rel, list) else str(rel).split()
+            if "canonical" not in [r.lower() for r in rel]:
+                continue
+            c = normalize(link["href"], page_url, site=page_url)
+            if not c or not same_site(c, page_url):
+                return None
+            # misconfigured sites point every page's canonical to the homepage: ignore that
+            if urlparse(c).path in ("", "/") and urlparse(page_url).path not in ("", "/"):
+                return None
+            return c
+    except Exception:
+        return None
+    return None
+
+
+NOT_FOUND_TITLE = re.compile(
+    r"\b404\b|not\s+found|page\s+introuvable|introuvable|non\s+trouv[ée]e|pagina\s+non\s+(?:trovata|esistente|disponibile)|"
+    r"nicht\s+gefunden|seite\s+existiert\s+nicht|p[áa]gina\s+no\s+encontrada|no\s+encontrad[ao]|niet\s+gevonden|error\s+404",
+    re.I,
+)
+NOT_FOUND_BODY = re.compile(
+    r"\b(?:error|errore|fehler|erreur)\s*404\b|\b404\b\s*[-–:|]?\s*(?:page|pagina|seite|not|non|nicht)|page\s+not\s+found|"
+    r"the\s+page\s+you\s+(?:are|were)\s+looking\s+for|pagina\s+non\s+(?:trovata|esistente)|la\s+pagina\s+(?:che\s+)?(?:stai\s+)?cerca\w*\s+non|"
+    r"seite\s+(?:wurde\s+)?nicht\s+gefunden|page\s+introuvable|page\s+non\s+trouv[ée]e|p[áa]gina\s+no\s+encontrada",
+    re.I,
+)
+
+
+def looks_not_found(title: str, md: str, status_code: int | None) -> str | None:
+    """Detects real and 'soft' 404 pages (HTTP 200 with a 'page not found' template). Returns a reason or None."""
+    if status_code in (404, 410):
+        return f"Pagina non trovata (HTTP {status_code})"
+    if title and NOT_FOUND_TITLE.search(title):
+        return f"Pagina non trovata (titolo: {title[:80]})"
+    text = (md or "").strip()
+    # only short pages: a long article that merely mentions "404" is not an error page
+    if text and len(text.split()) < 250 and NOT_FOUND_BODY.search(text[:1500]):
+        return "Pagina non trovata (contenuto da pagina 404)"
+    return None
 
 
 # ----------------------------------------------------------------------------- MAP (discovery)
@@ -242,7 +328,7 @@ async def fetch_sitemap_urls(root: str, client: httpx.AsyncClient) -> set[str]:
         for loc in tree.findall(".//s:sitemap/s:loc", ns):
             await parse(loc.text.strip(), depth + 1)
         for loc in tree.findall(".//s:url/s:loc", ns):
-            u = normalize(loc.text, root)
+            u = normalize(loc.text or "", root, site=root)
             if u and same_site(u, root):
                 found.add(u)
 
@@ -256,7 +342,7 @@ async def discover_links(root: str, client: httpx.AsyncClient, seed: set[str]) -
     from bs4 import BeautifulSoup
 
     found: set[str] = set(seed)
-    queue: list[str] = [root] + [u for u in seed][:500]
+    queue: list[str] = [normalize(root, root, site=root) or root] + [u for u in seed][:500]
     visited: set[str] = set()
     sem = asyncio.Semaphore(8)
 
@@ -269,7 +355,7 @@ async def discover_links(root: str, client: httpx.AsyncClient, seed: set[str]) -
                 soup = BeautifulSoup(r.text, "html.parser")
                 out = []
                 for a in soup.find_all("a", href=True):
-                    n = normalize(a["href"], str(r.url))
+                    n = normalize(a["href"], str(r.url), site=root)
                     if n and same_site(n, root):
                         out.append(n)
                 return out
@@ -296,6 +382,14 @@ async def map_site(req: MapReq, _=Depends(require_admin)):
     await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": "mapping"})
     try:
         async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "WISI-Assistant-Crawler/1.0"}) as c:
+            # follow redirects once so every URL uses the site's real scheme + host (www vs non-www, http vs https)
+            try:
+                r0 = await c.get(root, follow_redirects=True)
+                if same_site(str(r0.url), root):
+                    fu = urlparse(str(r0.url))
+                    root = f"{fu.scheme}://{fu.netloc}/"
+            except Exception:
+                pass
             urls = await fetch_sitemap_urls(root, c)
             urls = await discover_links(root, c, urls)
         # All URLs are returned; the dashboard shows which ones are excluded by the saved rules
@@ -342,6 +436,7 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
     await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "crawling"})
     done = errors = 0
     reasons: Counter[str] = Counter()
+    seen_canonical: dict[str, str] = {}  # canonical URL → first crawled URL in this job
     sem = asyncio.Semaphore(CONCURRENCY)
 
     md_gen = DefaultMarkdownGenerator(content_filter=PruningFilter(threshold=0.45, threshold_type="dynamic", min_word_threshold=8))
@@ -359,32 +454,54 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
         async with AsyncWebCrawler(config=browser_cfg) as crawler:
 
             async def one(u: str):
-                nonlocal done, errors
                 async with sem:
                     try:
-                        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
-                        res = await crawler.arun(url=u, config=run_cfg)
-                        if not res.success:
-                            raise RuntimeError(res.error_message or "fetch failed")
-                        md_obj = res.markdown
-                        # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str
-                        fit = getattr(md_obj, "fit_markdown", None) or getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
-                        raw = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
-                        md = fit if fit and len(fit) > 200 else raw
-                        title = (res.metadata or {}).get("title") or ""
-                        anchors = extract_anchor_map(res.html or "")
-                        await index_page(cid, u, title, md, anchors)
+                        await crawl_one(u)
+                    finally:
+                        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"done_count": done, "error_count": errors})
+
+            async def crawl_one(u: str):
+                nonlocal done, errors
+                try:
+                    await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
+                    res = await crawler.arun(url=u, config=run_cfg)
+                    if not res.success:
+                        raise RuntimeError(res.error_message or "fetch failed")
+                    md_obj = res.markdown
+                    # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str
+                    fit = getattr(md_obj, "fit_markdown", None) or getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
+                    raw = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
+                    md = fit if fit and len(fit) > 200 else raw
+                    title = (res.metadata or {}).get("title") or ""
+                    final_url = getattr(res, "redirected_url", None) or u
+                    page_url = canonical_url(res.html or "", final_url) or normalize(final_url, final_url, site=u) or u
+                    if page_url != u:
+                        log.info("crawl canonical job=%s %s -> %s", job_id, u, page_url)
+                        # the old row stored under the non-canonical URL is a duplicate: drop it (chunks cascade)
+                        await sb("DELETE", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{u}", "kind": "eq.page"})
+                    if page_url in seen_canonical:
+                        log.info("crawl duplicate job=%s %s is the same page as %s, skipped", job_id, u, seen_canonical[page_url])
                         done += 1
-                    except Exception as e:  # noqa: BLE001
-                        errors += 1
-                        reason = (str(e) or type(e).__name__).strip()
-                        reasons[reason.splitlines()[0][:200]] += 1
-                        log.warning("crawl page FAILED job=%s url=%s error=%s", job_id, u, reason[:500])
-                        try:
-                            await upsert_page(cid, u, {"status": "failed", "error": reason[:300], "last_crawled_at": now()})
-                        except Exception as e2:  # noqa: BLE001
-                            log.error("could not save page error job=%s url=%s: %s", job_id, u, e2)
-                    await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"done_count": done, "error_count": errors})
+                        return
+                    seen_canonical[page_url] = u
+                    not_found = looks_not_found(title, md, getattr(res, "status_code", None))
+                    if not_found:
+                        log.info("crawl page EMPTY job=%s url=%s reason=%s", job_id, page_url, not_found)
+                        await mark_empty(cid, page_url, title, len(md.split()), not_found)
+                        done += 1
+                        return
+                    anchors = extract_anchor_map(res.html or "")
+                    await index_page(cid, page_url, title, md, anchors)
+                    done += 1
+                except Exception as e:  # noqa: BLE001
+                    errors += 1
+                    reason = (str(e) or type(e).__name__).strip()
+                    reasons[reason.splitlines()[0][:200]] += 1
+                    log.warning("crawl page FAILED job=%s url=%s error=%s", job_id, u, reason[:500])
+                    try:
+                        await upsert_page(cid, u, {"status": "failed", "error": reason[:300], "last_crawled_at": now()})
+                    except Exception as e2:  # noqa: BLE001
+                        log.error("could not save page error job=%s url=%s: %s", job_id, u, e2)
 
             await asyncio.gather(*(one(u) for u in urls))
         elapsed = time.time() - t0
@@ -429,11 +546,17 @@ async def upsert_page(cid: str, url: str, fields: dict) -> dict:
     return rows[0]
 
 
+async def mark_empty(cid: str, url: str, title: str, words: int, reason: str | None) -> None:
+    """Page with nothing to index (too short, 404…): keep the row for visibility, remove any old chunks."""
+    page = await upsert_page(cid, url, {"title": title, "status": "empty", "chunk_count": 0, "word_count": words, "content_hash": None, "error": reason, "last_crawled_at": now()})
+    await sb("DELETE", "wa_chunks", params={"page_id": f"eq.{page['id']}"})
+
+
 async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str, str]):
     text = (md or "").strip()
     words = len(text.split())
     if words < 20:
-        await upsert_page(cid, url, {"title": title, "status": "empty", "chunk_count": 0, "word_count": words, "error": None, "last_crawled_at": now()})
+        await mark_empty(cid, url, title, words, None)
         return
     h = hashlib.sha256(text.encode()).hexdigest()[:32]
     existing = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})

@@ -67,3 +67,19 @@ export function renderMessageHtml(text) {
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   return out
 }
+
+/**
+ * Detects pages that look outdated: a year in the title or URL path that is well in the past
+ * (≤ current year − 2) and no recent year next to it. Returns that year, or null.
+ */
+export function staleYear(url, title, now = new Date()) {
+  const current = now.getFullYear()
+  let path = ''
+  try { path = decodeURIComponent(new URL(url).pathname) } catch { path = url || '' }
+  const years = [...`${path} ${title || ''}`.matchAll(/(?<!\d)(19[9]\d|20\d\d)(?!\d)/g)]
+    .map((m) => Number(m[1]))
+    .filter((y) => y >= 1995 && y <= current + 1)
+  if (!years.length) return null
+  const newest = Math.max(...years)
+  return newest <= current - 2 ? newest : null
+}
