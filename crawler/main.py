@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
+import sys
+from collections import Counter
 import re
 import time
 from datetime import datetime, timezone
@@ -27,12 +30,49 @@ from pydantic import BaseModel
 
 from chunking import chunk_markdown, slugify
 
-SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
-CRAWLER_SECRET = os.environ.get("CRAWLER_SECRET", "")
-CONCURRENCY = int(os.environ.get("CRAWL_CONCURRENCY", "4"))
-MAP_MAX_PAGES = int(os.environ.get("MAP_MAX_PAGES", "20000"))  # safety cap for discovery only (no page limit for crawling)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s [crawler] %(message)s", force=True)
+log = logging.getLogger("crawler")
+
+_QUOTES = "\"'`"
+
+
+def env(name: str, default: str = "") -> str:
+    """Reads an env var stripping whitespace, newlines and surrounding quotes (common copy/paste mistakes)."""
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    v = v.strip()
+    while v and (v[0] in _QUOTES or v[-1] in _QUOTES):
+        v = v.strip(_QUOTES).strip()
+    return v
+
+
+SUPABASE_URL = env("SUPABASE_URL").rstrip("/")
+SERVICE_KEY = env("SUPABASE_SERVICE_ROLE_KEY")
+OPENAI_KEY = env("OPENAI_API_KEY")
+CRAWLER_SECRET = env("CRAWLER_SECRET")
+CONCURRENCY = int(env("CRAWL_CONCURRENCY") or "4")
+MAP_MAX_PAGES = int(env("MAP_MAX_PAGES") or "20000")  # safety cap for discovery only (no page limit for crawling)
+
+
+def log_env_diagnostics() -> None:
+    """Logs which variables are configured, never their values (only the OpenAI key prefix and length)."""
+    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "OPENAI_API_KEY", "CRAWLER_SECRET", "CRAWL_CONCURRENCY", "MAP_MAX_PAGES", "PORT"):
+        raw = os.environ.get(name)
+        if raw is None:
+            log.info("env %s: MISSING", name)
+            continue
+        cleaned = env(name)
+        log.info("env %s: present%s%s", name, "" if cleaned else " but EMPTY",
+                 " (cleaned spaces/newlines/quotes)" if cleaned != raw else "")
+    if OPENAI_KEY:
+        log.info("env OPENAI_API_KEY: prefix=%r length=%d", OPENAI_KEY[:7], len(OPENAI_KEY))
+    log.info("config: concurrency=%d map_max_pages=%d", CONCURRENCY, MAP_MAX_PAGES)
+
+
+log_env_diagnostics()
+if not SUPABASE_URL or not SERVICE_KEY:
+    raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY sono obbligatorie")
 
 app = FastAPI(title="WISI Assistant crawler")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -85,20 +125,43 @@ async def embed(texts: list[str]) -> list[list[float]]:
     async with httpx.AsyncClient(timeout=120) as c:
         for i in range(0, len(texts), 64):
             batch = [t[:8000] for t in texts[i : i + 64]]
+            last_err = ""
             for attempt in range(4):
                 r = await c.post(
                     "https://api.openai.com/v1/embeddings",
                     headers={"Authorization": f"Bearer {OPENAI_KEY}"},
                     json={"model": "text-embedding-3-small", "input": batch},
                 )
+                if r.status_code < 300:
+                    out.extend(d["embedding"] for d in r.json()["data"])
+                    break
+                last_err = openai_error(r)
+                log.warning("OpenAI embeddings failed (attempt %d/4): %s", attempt + 1, last_err)
                 if r.status_code == 429 or r.status_code >= 500:
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
-                r.raise_for_status()
-                out.extend(d["embedding"] for d in r.json()["data"])
-                break
+                raise RuntimeError(last_err)
             else:
-                raise RuntimeError("Embedding API non disponibile")
+                raise RuntimeError(f"Embedding API non disponibile: {last_err}")
+    return out
+
+
+def openai_error(r: httpx.Response) -> str:
+    """Readable error from an OpenAI response body (message + code), not just the HTTP status."""
+    msg = code = None
+    try:
+        err = (r.json() or {}).get("error") or {}
+        if isinstance(err, dict):
+            msg, code = err.get("message"), err.get("code") or err.get("type")
+        else:
+            msg = str(err)
+    except Exception:
+        msg = (r.text or "").strip()[:300] or None
+    out = f"OpenAI {r.status_code}"
+    if code:
+        out += f" [{code}]"
+    if msg:
+        out += f" {str(msg)[:400]}"
     return out
 
 
@@ -273,9 +336,12 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
         from crawl4ai.content_filter_strategy import PruningContentFilter as PruningFilter
 
     cid = client["id"]
+    t0 = time.time()
+    log.info("crawl START job=%s client=%s pages=%d", job_id, cid, len(urls))
     await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "running", "started_at": now()})
     await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "crawling"})
     done = errors = 0
+    reasons: Counter[str] = Counter()
     sem = asyncio.Semaphore(CONCURRENCY)
 
     md_gen = DefaultMarkdownGenerator(content_filter=PruningFilter(threshold=0.45, threshold_type="dynamic", min_word_threshold=8))
@@ -311,14 +377,31 @@ async def run_crawl(client: dict, job_id: str, urls: list[str]):
                         done += 1
                     except Exception as e:  # noqa: BLE001
                         errors += 1
-                        await upsert_page(cid, u, {"status": "failed", "error": str(e)[:300], "last_crawled_at": now()})
+                        reason = (str(e) or type(e).__name__).strip()
+                        reasons[reason.splitlines()[0][:200]] += 1
+                        log.warning("crawl page FAILED job=%s url=%s error=%s", job_id, u, reason[:500])
+                        try:
+                            await upsert_page(cid, u, {"status": "failed", "error": reason[:300], "last_crawled_at": now()})
+                        except Exception as e2:  # noqa: BLE001
+                            log.error("could not save page error job=%s url=%s: %s", job_id, u, e2)
                     await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"done_count": done, "error_count": errors})
 
             await asyncio.gather(*(one(u) for u in urls))
+        elapsed = time.time() - t0
+        if done == 0 and errors > 0:
+            top, n = reasons.most_common(1)[0] if reasons else ("errore sconosciuto", errors)
+            msg = f"Tutte le {errors} pagine sono fallite. Motivo principale ({n}/{errors}): {top}"
+            log.error("crawl END job=%s status=error done=0 errors=%d in %.1fs: %s", job_id, errors, elapsed, msg)
+            await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, "error": msg[:500]})
+            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
+            return
         await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors})
         await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "ready", "last_crawl_at": now()})
+        log.info("crawl END job=%s status=done done=%d errors=%d in %.1fs%s", job_id, done, errors, elapsed,
+                 f" (top error: {reasons.most_common(1)[0][0]})" if reasons else "")
     except Exception as e:  # noqa: BLE001
-        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "error": str(e)[:500]})
+        log.exception("crawl END job=%s status=error (crash) done=%d errors=%d in %.1fs", job_id, done, errors, time.time() - t0)
+        await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"status": "error", "finished_at": now(), "current_url": None, "error": (str(e) or type(e).__name__)[:500]})
         await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error"})
 
 
