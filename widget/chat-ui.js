@@ -36,7 +36,9 @@ export function normalizeWidget(raw) {
     teaser_text: String(w.teaser_text ?? '').trim().slice(0, 160),
     teaser_delay: Math.max(0, Math.min(600, Number(w.teaser_delay) || 0)),
     disclaimer: raw && raw.disclaimer !== undefined && raw.disclaimer !== null ? String(raw.disclaimer).trim() : DEFAULT_DISCLAIMER,
-    lead_capture: ['before', 'after'].includes(w.lead_capture) ? w.lead_capture : 'off',
+    human_handoff: w.human_handoff === true,
+    // 'after' proposes to recontact the visitor: only with "Passaggio a operatore" enabled
+    lead_capture: w.lead_capture === 'before' || (w.lead_capture === 'after' && w.human_handoff === true) ? w.lead_capture : 'off',
     avatar: resolveAvatar(w),              // launcher (chat closed)
     headerAvatar: resolveHeaderAvatar(w),  // header + bot messages (chat open)
     botAvatar: w.bot_avatar === true,
@@ -365,7 +367,7 @@ export function mountChat(host, opts) {
       st.busy = false
     }
     if (w.lead_capture === 'before' && !st.leadDone) {
-      st.leadForm = { intro: 'Prima di iniziare, lasciaci i tuoi dati così possiamo ricontattarti se serve.', done: () => { st.msgs.push(welcome()) } }
+      st.leadForm = { intro: w.human_handoff ? 'Prima di iniziare, lasciaci i tuoi dati così possiamo ricontattarti se serve.' : 'Prima di iniziare, lasciaci nome ed email.', done: () => { st.msgs.push(welcome()) } }
     } else st.msgs.push(welcome())
     paint(); updateComposer()
   }

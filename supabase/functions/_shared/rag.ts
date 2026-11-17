@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { embed, llm, sendEmail } from './common.ts'
 import { deliverToChannel } from './channels.ts'
+import { baseRules, handoffEnabled, lowConfidenceNote } from './policy.ts'
 
 const LANG_NAME: Record<string, string> = { it: 'italiano', de: 'tedesco', fr: 'francese', en: 'inglese' }
 
@@ -65,11 +66,14 @@ export async function runMessage(sb: any, client: any, b: any) {
   }).join('\n\n---\n\n')
 
   const langRule = client.language && client.language !== 'auto' ? `Rispondi sempre in ${LANG_NAME[client.language] || client.language}.` : 'Rispondi nella stessa lingua in cui scrive l’utente.'
+  const handoff = handoffEnabled(client)
   const system = [
     client.instructions || `Sei l'assistente virtuale di ${client.name}. Rispondi in modo cortese e conciso usando solo le informazioni nel contesto.`,
+    // common rules for every client and channel: after the client's instructions, and they win on contact/operator topics
+    baseRules(client),
     langRule,
     `Hai a disposizione dei frammenti di contesto numerati. Ogni frammento ha un "Link" (URL della pagina, con #sezione quando disponibile): quando è utile per l'utente, inserisci il link direttamente nella risposta in formato markdown [testo](url), senza chiamarlo "fonte" e senza elencare le fonti alla fine. Non inventare link.`,
-    confident ? '' : `ATTENZIONE: il contesto non contiene informazioni sufficienti per questa domanda. Dillo chiaramente in una frase, non inventare nulla, e proponi di mettere l'utente in contatto con una persona (chiedi se vuole essere ricontattato).`,
+    confident ? '' : lowConfidenceNote(client),
     `Formattazione: testo semplice, al massimo grassetto **così**; niente tabelle, niente titoli.`,
     `\n=== CONTESTO ===\n${ctx || '(nessun contenuto rilevante trovato)'}\n=== FINE CONTESTO ===`,
   ].filter(Boolean).join('\n\n')
@@ -82,7 +86,8 @@ export async function runMessage(sb: any, client: any, b: any) {
 
   // no-answer tracking + escalation
   if (!confident) await sb.from('wa_messages').update({ no_answer: true }).eq('id', userMsg.id)
-  const shouldEscalate = (wantsHuman || (!confident && conv.message_count >= 2)) && conv.status !== 'escalated'
+  // internal escalation (Inbox + email) only when "Passaggio a operatore" is enabled for the client
+  const shouldEscalate = handoff && (wantsHuman || (!confident && conv.message_count >= 2)) && conv.status !== 'escalated'
   if (shouldEscalate) {
     const reason = wantsHuman ? 'Richiesta esplicita di un operatore' : 'Il bot non ha trovato risposte nella knowledge base'
     await sb.from('wa_conversations').update({ status: 'escalated', escalation_reason: reason }).eq('id', conv.id)

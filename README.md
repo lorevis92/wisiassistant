@@ -21,7 +21,9 @@ wisiassistant/
 - **Knowledge extra**: PDF/DOCX/TXT, FAQ scritte a mano, testo libero.
 - **Modello AI per cliente**: Anthropic, OpenAI, Google, Mistral, xAI, Groq (lista in `src/lib/models.js`).
 - **Conversazioni**: storico per cliente, filtri data/canale/stato, vista a bolle, export PDF del periodo.
-- **Inbox**: escalation automatica (richiesta esplicita o bot senza risposta) con email + handoff live (rispondi tu, su qualsiasi canale).
+- **Contatti e operatori**: regole di base comuni a tutti i clienti e canali (`supabase/functions/_shared/policy.ts`), che prevalgono sulle istruzioni personalizzate:
+  l'assistente non propone mai operatori, richiami o inoltri e non chiede i contatti; solo quando non può aiutare invita una volta a rivolgersi alla struttura con i contatti ufficiali (mai inventati).
+- **Inbox / passaggio a operatore** (facoltativo, spento di default, Impostazioni → Generale): escalation automatica con email + handoff live (rispondi tu, su qualsiasi canale).
 - **Lead capture**, feedback 👍/👎, domande senza risposta, analytics, domain lock facoltativo (nessun dominio = widget ovunque; localhost e file:// sempre ammessi), rate limiting.
 - **Report AI periodici**: settimanali/quindicinali/mensili, bozza → modifica → approva → invio (o invio automatico).
 - **Canali**: widget sito, pagina standalone `/c/<slug>`, Telegram, WhatsApp Cloud API, Instagram/Messenger (stesso webhook), email.
