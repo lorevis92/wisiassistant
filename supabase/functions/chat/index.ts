@@ -11,6 +11,7 @@ import { runMessage } from '../_shared/rag.ts'
  *  - poll        { conversation_id, after_id, client_slug? }               → operator (human) replies after the cursor only;
  *                                                                            without a cursor returns no messages, just `cursor` (latest id)
  *  - feedback    { message_id, value }                                     → 👍/👎
+ *  - end         { client_slug, conversation_id }                         → visitor ended the chat ("Termina chat"): open → resolved
  *  - human_reply { conversation_id, content }  (admin only)               → operator reply, delivered to channel
  *
  * The RAG pipeline lives in _shared/rag.ts (runMessage) and is reused by the channel webhooks.
@@ -29,6 +30,7 @@ Deno.serve(async (req) => {
       case 'history': return await modeHistory(sb, body)
       case 'poll': return await modePoll(sb, body)
       case 'feedback': return await modeFeedback(sb, body)
+      case 'end': return await modeEnd(sb, body)
       case 'human_reply': {
         const denied = await requireAdmin(req)
         if (denied) return denied
@@ -103,6 +105,14 @@ async function modePoll(sb: any, b: any) {
   }
   const { data } = await sb.from('wa_messages').select('id,role,content,created_at').eq('conversation_id', conv.id).eq('role', 'human').gt('created_at', since).order('created_at')
   return json({ messages: data || [], status: conv.status })
+}
+
+async function modeEnd(sb: any, b: any) {
+  // Only plain bot conversations are closed: escalated / operator ones stay open in the Inbox.
+  const conv = await loadConversation(sb, b)
+  if (!conv) return err('Conversazione non trovata', 404)
+  if (conv.status === 'open') await sb.from('wa_conversations').update({ status: 'resolved' }).eq('id', conv.id)
+  return json({ ok: true })
 }
 
 async function modeFeedback(sb: any, b: any) {
