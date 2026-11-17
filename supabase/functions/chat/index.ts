@@ -40,26 +40,34 @@ Deno.serve(async (req) => {
     }
   } catch (e) {
     console.error(e)
-    return err((e as Error).message || 'Errore interno', 500)
+    return err((e as Error).message || 'Errore interno', (e as any).status || 500)
   }
 })
 
 // ------------------------------------------------------------------ helpers
 async function loadClient(sb: any, slug: string) {
-  const { data } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
-  if (!data) throw new Error('Cliente non trovato')
-  if (data.status === 'paused') throw new Error('Assistente in pausa')
+  if (!slug) throw Object.assign(new Error('client_slug mancante'), { status: 400 })
+  const { data, error } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
+  if (error) throw new Error(`Database: ${error.message}`)
+  if (!data) throw Object.assign(new Error('Cliente non trovato'), { status: 404 })
+  if (data.status === 'paused') throw Object.assign(new Error('Assistente in pausa'), { status: 403 })
   return data
+}
+
+/** Bare lowercase hostname from "https://www.site.it/path", "www.site.it", "site.it:8080"… ('' if unusable). */
+function hostOf(v: unknown) {
+  return String(v || '').trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '').replace(/\.$/, '')
 }
 
 function originAllowed(client: any, channel: string, origin?: string) {
   if (channel !== 'web') return true
-  if (!origin) return false
-  const o = String(origin).replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase()
+  const o = hostOf(origin)
+  if (!o) return false
   if (o === 'localhost' || o === '127.0.0.1') return true
-  const allowed: string[] = (client.allowed_domains || []).map((d: string) => d.toLowerCase())
-  if (client.domain) { try { allowed.push(new URL(client.domain).hostname.toLowerCase()) } catch { /* ignore */ } }
-  return allowed.some((d) => o === d || o.endsWith(`.${d}`) || o === `www.${d}` || d === `www.${o}`)
+  // the main site may be saved with or without scheme ("www.site.it"): both count
+  const allowed = [...(client.allowed_domains || []), client.domain].map(hostOf).filter(Boolean)
+  const bare = (h: string) => h.replace(/^www\./, '')
+  return allowed.some((d) => o === d || o.endsWith(`.${d}`) || bare(o) === bare(d))
 }
 
 /**
@@ -70,8 +78,9 @@ function originAllowed(client: any, channel: string, origin?: string) {
  */
 async function modeConfig(sb: any, b: any) {
   const c = await loadClient(sb, b.client_slug)
-  if (!originAllowed(c, b.channel || 'web', b.origin)) return err('Dominio non autorizzato', 403)
-  return json({ name: c.name, widget: c.widget || {}, language: c.language })
+  if (!originAllowed(c, b.channel || 'web', b.origin)) return err(`Dominio non autorizzato: ${hostOf(b.origin) || '(sconosciuto)'}`, 403)
+  const widget = c.widget && typeof c.widget === 'object' && !Array.isArray(c.widget) ? c.widget : {}
+  return json({ name: c.name, widget, language: c.language })
 }
 
 /** Saved conversation (widget / standalone page), checked against the client when client_slug is given. */

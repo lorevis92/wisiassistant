@@ -64,6 +64,9 @@ wisiassistant/
    Se il mapping trova 0 URL o meno del 30% delle pagine già indicizzate, il re-crawl si ferma in errore senza modificare nulla.
 5. Immagini del widget: esegui `supabase/migrations/0004_widget_avatars.sql` (bucket `wa-avatars`). L'aspetto del widget e della pagina
    standalone si configura in Impostazioni → Aspetto, con anteprima dal vivo.
+6. **Database indietro rispetto al codice?** (es. errore "Could not find the 'recrawl_frequency' column … in the schema cache"):
+   esegui `supabase/migrations/0005_schema_recovery.sql` nel SQL Editor. È idempotente, non cancella dati, riunisce 0001/0003/0004
+   e ricarica la cache dello schema. I cron con segreti (`wa_reports`, `wa_recrawl`) restano da 0002/0003.
 
 ### 3. Frontend su Vercel
 1. Importa il repo. Framework: Vite. Build command `npm run build`, output `dist`.

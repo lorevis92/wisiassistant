@@ -15,7 +15,7 @@ export default function Overview({ client }) {
       setS(data || {})
       const since = daysAgo(30)
       const { data: q } = await supabase.from('wa_messages')
-        .select('content, conversation:conversations!inner(client_id)')
+        .select('content, conversation:wa_conversations!inner(client_id)')
         .eq('role', 'user').eq('conversation.client_id', client.id).gte('created_at', since).limit(500)
       const freq = {}
       for (const m of q || []) {
@@ -24,7 +24,7 @@ export default function Overview({ client }) {
       }
       setTop(Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 8))
       const { data: un } = await supabase.from('wa_messages')
-        .select('content, created_at, conversation:conversations!inner(client_id)')
+        .select('content, created_at, conversation:wa_conversations!inner(client_id)')
         .eq('role', 'user').eq('no_answer', true).eq('conversation.client_id', client.id).gte('created_at', since)
         .order('created_at', { ascending: false }).limit(8)
       setUnanswered(un || [])

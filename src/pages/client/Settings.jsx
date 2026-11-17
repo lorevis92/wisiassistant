@@ -46,8 +46,11 @@ export default function Settings({ client, reload }) {
 
   const save = async () => {
     setBusy(true)
+    const domain = f.domain.trim()
     const payload = {
       ...f,
+      // the crawler and the widget domain lock need a full URL: "www.site.it" → "https://www.site.it"
+      domain: domain && !/^https?:\/\//i.test(domain) ? `https://${domain}` : domain,
       allowed_domains: f.allowed_domains.split('\n').map((s) => s.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean),
       report_recipients: f.report_recipients.split(',').map((s) => s.trim()).filter(Boolean),
       confidence_threshold: Number(f.confidence_threshold), temperature: Number(f.temperature), rate_limit_per_hour: Number(f.rate_limit_per_hour),

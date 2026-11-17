@@ -23,7 +23,12 @@ import { makeApi, mountChat } from './chat-ui.js'
 
   async function init() {
     let cfg
-    try { cfg = await api({ mode: 'config', client_slug: slug, channel: 'web', origin: location.hostname }) } catch (e) { return console.warn('[WISI Assistant]', e.message) }
+    if (!SUPABASE_URL || !ANON) return console.warn('[WISI Assistant] configurazione di build mancante (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    try { cfg = await api({ mode: 'config', client_slug: slug, channel: 'web', origin: location.hostname }) } catch (e) {
+      const hint = e.status === 403 && /dominio/i.test(e.message) ? ` - aggiungi "${location.hostname}" ai domini autorizzati del cliente` : ''
+      return console.warn(`[WISI Assistant] widget non mostrato (${e.status || 'rete'}): ${e.message}${hint}`)
+    }
+    if (!document.body) await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }))
     const host = document.createElement('div')
     host.id = 'wisi-assistant-root'
     document.body.appendChild(host)
