@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { supabase, callCrawler } from '../../lib/supabase'
 import { fmtDateTime } from '../../lib/utils'
+import Appearance from './Appearance'
+import { resolveAvatar } from '../../../widget/avatars.js'
+import { DEFAULT_DISCLAIMER } from '../../../widget/chat-ui.js'
 import { StatusBadge, Toast, useToast } from '../../components/ui'
 import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS } from '../../lib/models'
 
@@ -19,7 +22,12 @@ export default function Settings({ client, reload }) {
     escalation_email: client.escalation_email || '',
     channels: client.channels || ['web', 'standalone'],
     allowed_domains: (client.allowed_domains || []).join('\n'),
-    widget: { color: '#E8352A', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'], ...(client.widget || {}) },
+    widget: {
+      color: '#E8352A', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'],
+      teaser_text: 'Ciao! Hai bisogno di aiuto?', teaser_delay: 0, disclaimer: DEFAULT_DISCLAIMER,
+      ...(client.widget || {}),
+      avatar: resolveAvatar(client.widget),
+    },
     report_frequency: client.report_frequency || 'none',
     recrawl_frequency: client.recrawl_frequency || 'none',
     report_recipients: (client.report_recipients || []).join(', '),
@@ -34,6 +42,7 @@ export default function Settings({ client, reload }) {
   const [busy, setBusy] = useState(false)
   const set = (k, v) => setF({ ...f, [k]: v })
   const setW = (k, v) => setF({ ...f, widget: { ...f.widget, [k]: v } })
+  const patchW = (patch) => setF((prev) => ({ ...prev, widget: { ...prev.widget, ...patch } }))
 
   const save = async () => {
     setBusy(true)
@@ -42,7 +51,14 @@ export default function Settings({ client, reload }) {
       allowed_domains: f.allowed_domains.split('\n').map((s) => s.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean),
       report_recipients: f.report_recipients.split(',').map((s) => s.trim()).filter(Boolean),
       confidence_threshold: Number(f.confidence_threshold), temperature: Number(f.temperature), rate_limit_per_hour: Number(f.rate_limit_per_hour),
-      widget: { ...f.widget, suggestions: (typeof f.widget.suggestions === 'string' ? f.widget.suggestions.split('\n') : f.widget.suggestions).map((s) => s.trim()).filter(Boolean) },
+      widget: {
+        ...f.widget,
+        suggestions: (typeof f.widget.suggestions === 'string' ? f.widget.suggestions.split('\n') : f.widget.suggestions).map((s) => s.trim()).filter(Boolean),
+        teaser_delay: Math.max(0, Number(f.widget.teaser_delay) || 0),
+        disclaimer: String(f.widget.disclaimer ?? '').trim(),
+        // legacy field kept in sync for older widget builds
+        avatar_url: f.widget.avatar?.kind === 'image' ? f.widget.avatar.url : '',
+      },
     }
     const { error } = await supabase.from('wa_clients').update(payload).eq('id', client.id)
     setBusy(false)
@@ -107,19 +123,11 @@ export default function Settings({ client, reload }) {
         <div className="hint">Tono, regole, cose da non dire, come usare i link. Le informazioni di contesto (pagine, FAQ, documenti) vengono aggiunte automaticamente con URL e sezione di ogni frammento, quindi qui puoi dire al bot come e quando proporre i link.</div>
       </div>
 
+      <Appearance client={client} widget={f.widget} setWidget={patchW} setToast={setToast} />
+
       <div className="grid2">
         <div className="card">
-          <div className="card-title">Widget</div>
-          <div className="grid2">
-            <div className="field"><label className="label">Titolo</label><input className="input" value={f.widget.title} onChange={(e) => setW('title', e.target.value)} /></div>
-            <div className="field"><label className="label">Colore</label><div className="row"><input type="color" value={f.widget.color} onChange={(e) => setW('color', e.target.value)} /><input className="input mono" value={f.widget.color} onChange={(e) => setW('color', e.target.value)} /></div></div>
-          </div>
-          <div className="field"><label className="label">Messaggio di benvenuto</label><input className="input" value={f.widget.welcome} onChange={(e) => setW('welcome', e.target.value)} /></div>
-          <div className="field"><label className="label">Domande suggerite (una per riga)</label><textarea className="textarea" style={{ minHeight: 70 }} value={Array.isArray(f.widget.suggestions) ? f.widget.suggestions.join('\n') : f.widget.suggestions} onChange={(e) => setW('suggestions', e.target.value)} /></div>
-          <div className="grid2">
-            <div className="field"><label className="label">Posizione</label><select className="select" value={f.widget.position} onChange={(e) => setW('position', e.target.value)}><option value="right">Basso destra</option><option value="left">Basso sinistra</option></select></div>
-            <div className="field"><label className="label">Avatar URL (opzionale)</label><input className="input mono" value={f.widget.avatar_url} onChange={(e) => setW('avatar_url', e.target.value)} /></div>
-          </div>
+          <div className="card-title">Widget e accesso</div>
           <div className="field"><label className="label">Raccolta lead</label>
             <select className="select" value={f.widget.lead_capture} onChange={(e) => setW('lead_capture', e.target.value)}>
               <option value="off">Disattivata</option><option value="before">Prima di iniziare la chat</option><option value="after">Dopo il primo scambio</option><option value="escalation">Solo in caso di escalation</option>

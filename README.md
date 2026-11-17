@@ -62,6 +62,8 @@ wisiassistant/
    Il re-crawl rimappa il sito, rispetta le regole include/exclude, indicizza le pagine nuove, ri-embedda solo quelle cambiate,
    disattiva quelle sparite (stato "Sparita") e segnala quelle non più collegate. Documenti, FAQ e testi manuali non vengono toccati.
    Se il mapping trova 0 URL o meno del 30% delle pagine già indicizzate, il re-crawl si ferma in errore senza modificare nulla.
+5. Immagini del widget: esegui `supabase/migrations/0004_widget_avatars.sql` (bucket `wa-avatars`). L'aspetto del widget e della pagina
+   standalone si configura in Impostazioni → Aspetto, con anteprima dal vivo.
 
 ### 3. Frontend su Vercel
 1. Importa il repo. Framework: Vite. Build command `npm run build`, output `dist`.
@@ -106,5 +108,5 @@ WISI Assistant vive nel progetto Supabase **wisinvaders**, insieme ad altre app.
 - tutto ciò che crea ha prefisso `wa_`: tabelle (`wa_clients`, `wa_pages`, `wa_chunks`, `wa_crawl_jobs`, `wa_conversations`, `wa_messages`,
   `wa_leads`, `wa_reports`, `wa_rate_limits`, `wa_admins`), vista `wa_client_stats`, funzioni `wa_match_chunks`, `wa_check_rate_limit`,
   `wa_is_admin`, `wa_touch_updated_at`, `wa_on_message_insert`, trigger, indici, policy, job cron (`wa_reports`, `wa_ratelimit_cleanup`, `wa_recrawl`)
-  e bucket storage `wa-documents`;
+  e bucket storage `wa-documents` (privato) e `wa-avatars` (pubblico in lettura, immagini del widget);
 - le migration creano/sostituiscono/eliminano **solo** oggetti `wa_`: mai toccare tabelle, funzioni o policy di altre app.
