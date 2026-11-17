@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase, callFunction } from '../../lib/supabase'
 import { StatusBadge, Toast, useToast, Modal } from '../../components/ui'
 import { fmtDateTime } from '../../lib/utils'
+import DocumentUploader from '../../components/DocumentUploader'
 
 /** Manual knowledge: PDF / text / FAQ entries. Each becomes a "page" of kind 'document' or 'faq' and gets chunked+embedded by the `ingest` function. */
 export default function Knowledge({ client }) {
@@ -11,7 +12,6 @@ export default function Knowledge({ client }) {
   const [textOpen, setTextOpen] = useState(false)
   const [faq, setFaq] = useState({ question: '', answer: '', link: '' })
   const [txt, setTxt] = useState({ title: '', content: '', link: '' })
-  const [uploading, setUploading] = useState(false)
 
   const load = async () => {
     const { data } = await supabase.from('wa_pages').select('id,url,title,kind,status,chunk_count,enabled,last_crawled_at,error,created_at')
@@ -24,19 +24,6 @@ export default function Knowledge({ client }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_pages', filter: `client_id=eq.${client.id}` }, () => load()).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [client.id])
-
-  const uploadPdf = async (file) => {
-    if (!file) return
-    setUploading(true)
-    try {
-      const path = `${client.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-      const { error } = await supabase.storage.from('wa-documents').upload(path, file, { upsert: false })
-      if (error) throw error
-      await callFunction('ingest', { client_id: client.id, kind: 'document', storage_path: path, title: file.name })
-      setToast('Documento caricato, indicizzazione in corso')
-    } catch (e) { setToast(e.message) }
-    setUploading(false)
-  }
 
   const addFaq = async (e) => {
     e.preventDefault()
@@ -58,12 +45,13 @@ export default function Knowledge({ client }) {
   return (
     <div className="col" style={{ gap: 16 }}>
       <Toast msg={toast} />
-      <div className="grid3">
-        <div className="card">
-          <div className="card-title">Carica PDF / DOCX / TXT</div>
-          <input type="file" accept=".pdf,.txt,.md,.docx" onChange={(e) => uploadPdf(e.target.files?.[0])} disabled={uploading} />
-          <div className="hint">Listini, condizioni, manuali. Il contenuto viene spezzato in sezioni e indicizzato insieme al sito.</div>
-        </div>
+      <div className="card">
+        <div className="card-title">Carica documenti (PDF / DOCX / TXT / MD)</div>
+        <DocumentUploader clientId={client.id} onUploaded={load} />
+        <div className="hint">Listini, condizioni, manuali. Puoi caricare più file insieme: ognuno viene spezzato in sezioni e indicizzato insieme al sito.</div>
+      </div>
+
+      <div className="grid2">
         <div className="card">
           <div className="card-title">FAQ scritta a mano</div>
           <button className="btn" onClick={() => setFaqOpen(true)}>+ Aggiungi FAQ</button>
