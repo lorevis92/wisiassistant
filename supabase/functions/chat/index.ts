@@ -5,7 +5,7 @@ import { runMessage } from '../_shared/rag.ts'
 
 /**
  * Modes (POST JSON):
- *  - config      { client_slug, channel, origin }                        → public widget config (domain-locked)
+ *  - config      { client_slug, channel, origin }                        → public widget config (optional domain lock, see originAllowed)
  *  - message     { client_slug, conversation_id?, content, channel, page_url, origin, lead?, external_id?, visitor_id? }
  *  - history     { client_slug, conversation_id }                         → full transcript (user, assistant, operator) for a saved conversation
  *  - poll        { conversation_id, after_id, client_slug? }               → operator (human) replies after the cursor only;
@@ -59,13 +59,24 @@ function hostOf(v: unknown) {
   return String(v || '').trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '').replace(/\.$/, '')
 }
 
+/**
+ * Optional domain lock for the site widget (channel 'web').
+ *  - no allowed_domains for the client → the widget works on any site (the main site alone is NOT a restriction);
+ *  - allowed_domains set → only those domains (and their subdomains; www / non-www are equivalent);
+ *  - always allowed, for tests: localhost (any port), 127.0.0.1, [::1], *.localhost and pages opened from file://
+ *    (origin "null" or empty).
+ * Other channels are never checked here: the standalone page uses channel 'standalone', Telegram / WhatsApp go
+ * through their webhooks straight to runMessage.
+ */
 function originAllowed(client: any, channel: string, origin?: string) {
   if (channel !== 'web') return true
-  const o = hostOf(origin)
-  if (!o) return false
-  if (o === 'localhost' || o === '127.0.0.1') return true
-  // the main site may be saved with or without scheme ("www.site.it"): both count
-  const allowed = [...(client.allowed_domains || []), client.domain].map(hostOf).filter(Boolean)
+  const allowed = (Array.isArray(client.allowed_domains) ? client.allowed_domains : []).map(hostOf).filter(Boolean)
+  if (!allowed.length) return true
+  const raw = String(origin ?? '').trim().toLowerCase()
+  if (!raw || raw === 'null' || raw.startsWith('file:')) return true
+  const o = hostOf(raw)
+  if (!o) return true
+  if (o === 'localhost' || o.endsWith('.localhost') || o === '127.0.0.1' || o === '[::1]' || o === '::1') return true
   const bare = (h: string) => h.replace(/^www\./, '')
   return allowed.some((d) => o === d || o.endsWith(`.${d}`) || bare(o) === bare(d))
 }
@@ -147,7 +158,7 @@ async function modeHumanReply(sb: any, b: any) {
 // ------------------------------------------------------------------ MESSAGE (RAG)
 async function modeMessage(sb: any, b: any) {
   const client = await loadClient(sb, b.client_slug)
-  if (!originAllowed(client, b.channel || 'web', b.origin)) return err('Dominio non autorizzato', 403)
+  if (!originAllowed(client, b.channel || 'web', b.origin)) return err(`Dominio non autorizzato: ${hostOf(b.origin) || '(sconosciuto)'}`, 403)
   const r = await runMessage(sb, client, b)
   return json(r)
 }

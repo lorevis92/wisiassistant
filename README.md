@@ -22,7 +22,7 @@ wisiassistant/
 - **Modello AI per cliente**: Anthropic, OpenAI, Google, Mistral, xAI, Groq (lista in `src/lib/models.js`).
 - **Conversazioni**: storico per cliente, filtri data/canale/stato, vista a bolle, export PDF del periodo.
 - **Inbox**: escalation automatica (richiesta esplicita o bot senza risposta) con email + handoff live (rispondi tu, su qualsiasi canale).
-- **Lead capture**, feedback 👍/👎, domande senza risposta, analytics, domain lock, rate limiting.
+- **Lead capture**, feedback 👍/👎, domande senza risposta, analytics, domain lock facoltativo (nessun dominio = widget ovunque; localhost e file:// sempre ammessi), rate limiting.
 - **Report AI periodici**: settimanali/quindicinali/mensili, bozza → modifica → approva → invio (o invio automatico).
 - **Canali**: widget sito, pagina standalone `/c/<slug>`, Telegram, WhatsApp Cloud API, Instagram/Messenger (stesso webhook), email.
 

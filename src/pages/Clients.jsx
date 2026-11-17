@@ -30,7 +30,6 @@ export default function Clients() {
     const slug = form.slug || slugify(form.name)
     const { data, error } = await supabase.from('wa_clients').insert({
       name: form.name.trim(), domain, slug, model: DEFAULT_MODEL,
-      allowed_domains: domain ? [new URL(domain).hostname] : [],
     }).select().single()
     if (error) return setToast(error.message)
     setOpen(false)

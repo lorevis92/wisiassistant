@@ -136,7 +136,7 @@ export default function Settings({ client, reload }) {
               <option value="off">Disattivata</option><option value="before">Prima di iniziare la chat</option><option value="after">Dopo il primo scambio</option><option value="escalation">Solo in caso di escalation</option>
             </select></div>
           <div className="field"><label className="label">Domini autorizzati (uno per riga)</label><textarea className="textarea mono" style={{ minHeight: 70 }} value={f.allowed_domains} onChange={(e) => set('allowed_domains', e.target.value)} />
-            <div className="hint">Il widget funziona solo da questi domini (domain lock). Il sito principale è già incluso.</div></div>
+            <div className="hint">Lascia vuoto per far funzionare il widget su qualsiasi sito. Aggiungi domini solo se vuoi limitarlo a quei siti. Localhost e file:// sono sempre ammessi per i test.</div></div>
           <div className="field"><label className="label">Limite messaggi per visitatore / ora</label><input className="input mono" type="number" value={f.rate_limit_per_hour} onChange={(e) => set('rate_limit_per_hour', e.target.value)} /></div>
         </div>
 
