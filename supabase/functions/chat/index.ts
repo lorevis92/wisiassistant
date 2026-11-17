@@ -62,6 +62,12 @@ function originAllowed(client: any, channel: string, origin?: string) {
   return allowed.some((d) => o === d || o.endsWith(`.${d}`) || o === `www.${d}` || d === `www.${o}`)
 }
 
+/**
+ * Public widget config. `widget` is clients.widget as saved by the admin (Impostazioni → Aspetto), read by
+ * widget/chat-ui.js: title, welcome, suggestions, color, position, teaser_text, teaser_delay, disclaimer, lead_capture,
+ * avatar (launcher, chat closed), header_avatar (header + bot messages, chat open; null → launcher image), bot_avatar.
+ * Unknown / unsafe values are sanitized client-side (widget/avatars.js), so new fields need no change here.
+ */
 async function modeConfig(sb: any, b: any) {
   const c = await loadClient(sb, b.client_slug)
   if (!originAllowed(c, b.channel || 'web', b.origin)) return err('Dominio non autorizzato', 403)

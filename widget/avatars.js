@@ -1,7 +1,10 @@
 /**
- * Avatar of the assistant (launcher + chat header). Shared by the widget, the standalone page and the admin panel.
- * Stored in clients.widget.avatar = { kind: 'preset' | 'image', preset, bg, fg, url }.
- * Legacy configs with only widget.avatar_url are read as an uploaded image.
+ * Avatars of the assistant. Shared by the widget, the standalone page and the admin panel.
+ * Stored in clients.widget (JSON, no dedicated columns):
+ *   avatar        = { kind: 'preset' | 'image', preset, bg, fg, url }  → launcher (chat closed)
+ *   header_avatar = same shape, or null                                  → chat header + bot messages (chat open);
+ *                   null / missing / unusable → falls back to the launcher avatar, then to the default silhouette.
+ * Legacy configs with only widget.avatar_url are read as an uploaded launcher image.
  */
 
 export const AVATAR_PRESETS = [
@@ -23,20 +26,33 @@ export function safeUrl(u) {
   return typeof u === 'string' && /^https:\/\/[^\s"'<>]+$/i.test(u.trim()) ? u.trim() : ''
 }
 
+function cleanAvatar(a, base) {
+  const out = {
+    kind: a.kind === 'image' ? 'image' : 'preset',
+    preset: AVATAR_PRESETS.some((p) => p.id === a.preset) ? a.preset : base.preset,
+    bg: safeColor(a.bg, base.bg),
+    fg: safeColor(a.fg, base.fg),
+    url: safeUrl(a.url),
+  }
+  if (out.kind === 'image' && !out.url) out.kind = 'preset'
+  return out
+}
+
+/** Launcher avatar (chat closed). Never empty: default silhouette in the main color. */
 export function resolveAvatar(widget) {
   const w = widget || {}
   const a = w.avatar && typeof w.avatar === 'object' ? w.avatar : null
   const base = { ...DEFAULT_AVATAR, bg: safeColor(w.color, DEFAULT_AVATAR.bg) }
   if (!a) return w.avatar_url && safeUrl(w.avatar_url) ? { ...base, kind: 'image', url: safeUrl(w.avatar_url) } : base
-  const out = {
-    kind: a.kind === 'image' ? 'image' : 'preset',
-    preset: AVATAR_PRESETS.some((p) => p.id === a.preset) ? a.preset : 'person',
-    bg: safeColor(a.bg, base.bg),
-    fg: safeColor(a.fg, DEFAULT_AVATAR.fg),
-    url: safeUrl(a.url),
-  }
-  if (out.kind === 'image' && !out.url) out.kind = 'preset'
-  return out
+  return cleanAvatar(a, base)
+}
+
+/** Header / profile avatar (chat open). Unset or an image without a valid URL → the launcher avatar. */
+export function resolveHeaderAvatar(widget) {
+  const launcher = resolveAvatar(widget)
+  const h = widget && widget.header_avatar && typeof widget.header_avatar === 'object' ? widget.header_avatar : null
+  if (!h || (h.kind === 'image' && !safeUrl(h.url))) return launcher
+  return cleanAvatar(h, { ...launcher, preset: 'person' })
 }
 
 const FIGURES = {

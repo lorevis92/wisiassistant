@@ -5,9 +5,10 @@
  *  - mode 'preview' → live preview in the admin panel (no storage, fake API), preview: 'open' | 'closed'
  *
  * All appearance values come from the public config returned by the `chat` edge function (mode 'config'):
- * cfg.widget = { title, welcome, suggestions[], color, position, avatar{}, teaser_text, teaser_delay, disclaimer, lead_capture }
+ * cfg.widget = { title, welcome, suggestions[], color, position, avatar{}, header_avatar{}|null, bot_avatar, teaser_text, teaser_delay,
+ *               disclaimer, lead_capture }  (see widget/avatars.js for the avatar fallbacks)
  */
-import { avatarMarkup, resolveAvatar, safeColor } from './avatars.js'
+import { avatarMarkup, resolveAvatar, resolveHeaderAvatar, safeColor } from './avatars.js'
 
 export const DEFAULT_DISCLAIMER = 'Le informazioni potrebbero non essere del tutto accurate. Per questioni importanti contatta direttamente la struttura.'
 export const DEFAULT_WIDGET = {
@@ -36,7 +37,9 @@ export function normalizeWidget(raw) {
     teaser_delay: Math.max(0, Math.min(600, Number(w.teaser_delay) || 0)),
     disclaimer: raw && raw.disclaimer !== undefined && raw.disclaimer !== null ? String(raw.disclaimer).trim() : DEFAULT_DISCLAIMER,
     lead_capture: ['before', 'after'].includes(w.lead_capture) ? w.lead_capture : 'off',
-    avatar: resolveAvatar(w),
+    avatar: resolveAvatar(w),              // launcher (chat closed)
+    headerAvatar: resolveHeaderAvatar(w),  // header + bot messages (chat open)
+    botAvatar: w.bot_avatar === true,
   }
 }
 
@@ -139,6 +142,10 @@ function styles(w, mode) {
 .is-open .l-close{opacity:1;transform:none}
 .is-open .l-face{opacity:0;transform:scale(.8)}
 .l-face svg,.avatar svg,.avatar-img{width:100%;height:100%;display:block;object-fit:cover}
+.row.bot.with-av{flex-direction:row;align-items:flex-end;gap:8px;max-width:92%}
+.row.bot.with-av .stack{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+.mini-av{width:26px;height:26px;border-radius:50%;overflow:hidden;flex:none;background:var(--soft);margin-bottom:2px}
+.row.bot.with-av.has-fb .mini-av{margin-bottom:30px}
 
 /* preview bubble */
 .teaser{position:var(--pos);bottom:28px;${side}:92px;max-width:min(260px,calc(100% - 120px));z-index:2147483000;animation:wa-pop .28s ease both}
@@ -247,7 +254,8 @@ export function mountChat(host, opts) {
 
   ensureFont()
   const shadow = host.shadowRoot || host.attachShadow({ mode: 'open' })
-  const avatar = avatarMarkup(w.avatar)
+  const launcherAv = avatarMarkup(w.avatar)
+  const headerAv = avatarMarkup(w.headerAvatar)
   const panelId = `wa-panel-${Math.random().toString(36).slice(2, 8)}`
   shadow.innerHTML = `<style>${styles(w, mode)}</style>
 <div class="wa mode-${mode}">
@@ -257,11 +265,11 @@ export function mountChat(host, opts) {
     <button class="teaser-x" type="button" aria-label="Chiudi il messaggio">${ICON.closeSm}</button>
   </div>
   <button class="launcher" type="button" aria-label="Apri la chat" aria-expanded="false" aria-controls="${panelId}">
-    <span class="l-face">${avatar}</span><span class="l-close">${ICON.chevron}</span>
+    <span class="l-face">${launcherAv}</span><span class="l-close">${ICON.chevron}</span>
   </button>`}
   <section class="panel" id="${panelId}" tabindex="-1" role="dialog" aria-label="Chat con ${esc(w.title)}" ${isPage ? '' : 'aria-hidden="true"'}>
     <header class="head">
-      <span class="avatar">${avatar}</span>
+      <span class="avatar">${headerAv}</span>
       <div class="name">${esc(w.title)}</div>
       <div class="menu-wrap">
         <button class="icon menu-btn" type="button" aria-label="Altre opzioni" aria-haspopup="menu" aria-expanded="false">${ICON.dots}</button>
@@ -418,12 +426,19 @@ export function mountChat(host, opts) {
       const bot = m.role !== 'user'
       row.className = `row ${bot ? 'bot' : 'user'}${m.fresh ? ' fresh' : ''}`
       m.fresh = false
-      if (m.role === 'human') row.insertAdjacentHTML('beforeend', '<div class="who">Operatore</div>')
+      // optional profile image next to the assistant's messages (not next to operator replies)
+      let wrap = row
+      if (bot && w.botAvatar && m.role === 'assistant') {
+        row.classList.add('with-av')
+        row.insertAdjacentHTML('beforeend', `<span class="mini-av" aria-hidden="true">${headerAv}</span>`)
+        wrap = document.createElement('div'); wrap.className = 'stack'; row.appendChild(wrap)
+      }
+      if (m.role === 'human') wrap.insertAdjacentHTML('beforeend', '<div class="who">Operatore</div>')
       const b = document.createElement('div')
       b.className = 'bubble'
       b.innerHTML = renderText(m.tokens ? m.tokens.slice(0, m.shown).join('') : m.content)
       m.el = b
-      row.appendChild(b)
+      wrap.appendChild(b)
       if (m.role === 'assistant' && m.id && !m.tokens) {
         const fb = document.createElement('div')
         fb.className = 'fb'
@@ -433,7 +448,8 @@ export function mountChat(host, opts) {
           m.feedback = Number(btn.dataset.v); paint()
           try { await api({ mode: 'feedback', message_id: m.id, value: m.feedback }) } catch { /* ignore */ }
         }))
-        row.appendChild(fb)
+        wrap.appendChild(fb)
+        row.classList.add('has-fb')
       }
       body.appendChild(row)
     }
@@ -443,7 +459,10 @@ export function mountChat(host, opts) {
       body.appendChild(s)
     }
     if (st.leadForm) body.appendChild(leadCard())
-    if (st.busy) body.insertAdjacentHTML('beforeend', '<div class="row bot fresh" aria-label="L’assistente sta scrivendo"><div class="bubble typing"><i></i><i></i><i></i></div></div>')
+    if (st.busy) {
+      const av = w.botAvatar ? `<span class="mini-av" aria-hidden="true">${headerAv}</span>` : ''
+      body.insertAdjacentHTML('beforeend', `<div class="row bot fresh${w.botAvatar ? ' with-av' : ''}" aria-label="L’assistente sta scrivendo">${av}<div class="bubble typing"><i></i><i></i><i></i></div></div>`)
+    }
     body.scrollTop = body.scrollHeight
   }
 

@@ -1,37 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { Modal } from '../../components/ui'
-import { AVATAR_PRESETS, presetSvg, resolveAvatar } from '../../../widget/avatars.js'
+import { AVATAR_PRESETS, DEFAULT_AVATAR, avatarMarkup, presetSvg, resolveAvatar } from '../../../widget/avatars.js'
 import { DEFAULT_DISCLAIMER, mountChat } from '../../../widget/chat-ui.js'
 
 const BUCKET = 'wa-avatars'
+const ACCEPTED = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+const MAX_SOURCE_MB = 10 // original file chosen by the admin (it is cropped + resized before upload)
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // bucket limit (migration 0004)
 const PREVIEW_REPLY = 'Questa è un’anteprima: qui comparirà la risposta dell’assistente, con i **dettagli importanti** in evidenza e i link alle pagine del sito, ad esempio [Camere e suite](https://example.com/camere).'
 
 /**
- * "Aspetto" section of the client settings: avatar, name, texts, colour, position, preview bubble, disclaimer,
- * with a live preview rendered by the same code as the real widget (widget/chat-ui.js).
- * Values live in clients.widget and reach the widget through the public config of the `chat` function.
+ * "Aspetto" section of the client settings: launcher image, header (profile) image, name, texts, colour, position,
+ * preview bubble, disclaimer, with a live preview rendered by the same code as the real widget (widget/chat-ui.js).
+ * Values live in clients.widget (avatar, header_avatar, bot_avatar, …) and reach the widget through the public
+ * config of the `chat` function.
  */
 export default function Appearance({ client, widget, setWidget, setToast }) {
-  const avatar = resolveAvatar(widget)
-  const setAvatar = (patch) => setWidget({ avatar: { ...avatar, ...patch } })
-  const [cropFile, setCropFile] = useState(null)
-  const [uploading, setUploading] = useState(false)
-  const fileRef = useRef(null)
+  const launcher = resolveAvatar(widget)
+  const header = widget.header_avatar && typeof widget.header_avatar === 'object' ? widget.header_avatar : null
   const suggestions = Array.isArray(widget.suggestions) ? widget.suggestions.join('\n') : widget.suggestions || ''
-
-  const upload = async (blob) => {
-    setUploading(true)
-    const ext = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png'
-    const path = `${client.id}/avatar-${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false })
-    setUploading(false)
-    if (error) return setToast(`Caricamento non riuscito: ${error.message}`)
-    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)
-    setAvatar({ kind: 'image', url: data.publicUrl })
-    setCropFile(null)
-    setToast('Immagine caricata: ricorda di salvare')
-  }
 
   return (
     <div className="card">
@@ -39,33 +27,24 @@ export default function Appearance({ client, widget, setWidget, setToast }) {
       <div className="appearance-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 400px', gap: 24, alignItems: 'start' }}>
         <div className="col" style={{ gap: 0 }}>
           <div className="field">
-            <label className="label">Immagine del pallino e della testata</label>
-            <div className="row wrap" style={{ gap: 10 }}>
-              {AVATAR_PRESETS.map((p) => (
-                <button key={p.id} type="button" title={p.label} aria-label={p.label} aria-pressed={avatar.kind === 'preset' && avatar.preset === p.id}
-                  onClick={() => setAvatar({ kind: 'preset', preset: p.id })}
-                  style={avatarTile(avatar.kind === 'preset' && avatar.preset === p.id)}
-                  dangerouslySetInnerHTML={{ __html: presetSvg(p.id, avatar.bg, avatar.fg) }} />
-              ))}
-              <button type="button" title="Carica immagine" aria-label="Carica immagine" aria-pressed={avatar.kind === 'image'}
-                onClick={() => (avatar.kind === 'image' || !avatar.url ? fileRef.current?.click() : setAvatar({ kind: 'image' }))}
-                style={{ ...avatarTile(avatar.kind === 'image'), background: '#f3f4f6', color: '#57606a', fontSize: 22 }}>
-                {avatar.url ? <img src={avatar.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '+'}
-              </button>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden
-                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setCropFile(f) }} />
-            </div>
-            {avatar.kind === 'preset' ? (
-              <div className="row wrap" style={{ marginTop: 10, gap: 16 }}>
-                <ColorField label="Sfondo" value={avatar.bg} onChange={(v) => setAvatar({ bg: v })} />
-                <ColorField label="Figura" value={avatar.fg} onChange={(v) => setAvatar({ fg: v })} />
-              </div>
-            ) : (
-              <div className="row" style={{ marginTop: 10 }}>
-                <button type="button" className="btn sm" disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? 'Caricamento…' : 'Cambia immagine'}</button>
-              </div>
-            )}
-            <div className="hint">Le immagini caricate vengono ritagliate quadrate e ridimensionate a 256 px prima del caricamento.</div>
+            <label className="label">Immagine del pallino</label>
+            <AvatarPicker slot="launcher" client={client} setToast={setToast} value={launcher}
+              onChange={(a) => setWidget({ avatar: a })} onRemove={() => setWidget({ avatar: { ...launcher, kind: 'preset', url: '' } })} />
+            <div className="hint">Visibile a chat chiusa, in basso sul sito.</div>
+          </div>
+
+          <div className="field">
+            <label className="label">Immagine intestazione (profilo)</label>
+            <AvatarPicker slot="header" client={client} setToast={setToast} value={header} inherit={launcher}
+              onChange={(a) => setWidget({ header_avatar: a })} onRemove={() => setWidget({ header_avatar: null })} />
+            <label className="row small" style={{ gap: 8, marginTop: 10, cursor: 'pointer' }}>
+              <input type="checkbox" className="checkbox" checked={widget.bot_avatar === true} onChange={(e) => setWidget({ bot_avatar: e.target.checked })} />
+              Mostrala anche accanto ai messaggi dell’assistente
+            </label>
+            <div className="hint">Visibile a chat aperta, accanto al nome. Se non la imposti si usa l’immagine del pallino.</div>
+          </div>
+          <div className="hint" style={{ marginTop: -6, marginBottom: 14 }}>
+            Formati PNG, JPG, WebP o GIF fino a {MAX_SOURCE_MB} MB: le immagini vengono ritagliate quadrate e ridimensionate a 256 px prima del caricamento.
           </div>
 
           <div className="grid2">
@@ -101,8 +80,88 @@ export default function Appearance({ client, widget, setWidget, setToast }) {
         <LivePreview client={client} widget={widget} />
       </div>
       <style>{'@media (max-width: 1100px){.appearance-grid{grid-template-columns:minmax(0,1fr)!important}}'}</style>
-      {cropFile && <AvatarCropper file={cropFile} busy={uploading} onCancel={() => setCropFile(null)} onDone={upload} />}
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ avatar picker (presets or uploaded image) */
+/**
+ * value: avatar object, or null when `inherit` is given (= "same as the launcher").
+ * Removing an uploaded image goes back to the presets (launcher) or to "same as the launcher" (header).
+ * Old files stay in the bucket: a removed image may still be the one saved until "Salva tutto" is clicked.
+ */
+function AvatarPicker({ slot, client, value, inherit, onChange, onRemove, setToast }) {
+  const fileRef = useRef(null)
+  const [cropFile, setCropFile] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const cur = value ? { ...DEFAULT_AVATAR, bg: inherit?.bg || DEFAULT_AVATAR.bg, ...value } : null
+  const colors = cur || inherit || DEFAULT_AVATAR
+  const isImage = cur?.kind === 'image' && !!cur.url
+  const set = (patch) => onChange({ ...(cur || { ...DEFAULT_AVATAR, bg: colors.bg, fg: colors.fg }), ...patch })
+
+  const pick = (e) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    if (!ACCEPTED.includes(f.type)) return setToast('Formato non supportato: usa PNG, JPG, WebP o GIF')
+    if (f.size > MAX_SOURCE_MB * 1024 * 1024) return setToast(`Immagine troppo grande (max ${MAX_SOURCE_MB} MB)`)
+    setCropFile(f)
+  }
+
+  const upload = async (blob) => {
+    if (blob.size > MAX_UPLOAD_BYTES) return setToast('Immagine risultante troppo grande (max 2 MB)')
+    setUploading(true)
+    const ext = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png'
+    const path = `${client.id}/${slot}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false })
+    setUploading(false)
+    if (error) return setToast(`Caricamento non riuscito: ${error.message}`)
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)
+    set({ kind: 'image', url: data.publicUrl })
+    setCropFile(null)
+    setToast('Immagine caricata: ricorda di salvare')
+  }
+
+  return (
+    <>
+      <div className="row wrap" style={{ gap: 10 }}>
+        {inherit && (
+          <button type="button" title="Uguale al pallino" aria-label="Uguale al pallino" aria-pressed={!cur} onClick={() => onChange(null)}
+            style={{ ...avatarTile(!cur), position: 'relative' }}>
+            <span style={{ width: '100%', height: '100%', display: 'block', opacity: 0.55 }} dangerouslySetInnerHTML={{ __html: avatarMarkup(inherit) }} />
+            <span style={{ position: 'absolute', fontSize: 10, fontWeight: 600, color: '#111', background: 'rgba(255,255,255,.85)', borderRadius: 4, padding: '0 3px' }}>=</span>
+          </button>
+        )}
+        {AVATAR_PRESETS.map((p) => {
+          const active = cur?.kind === 'preset' && cur.preset === p.id
+          return (
+            <button key={p.id} type="button" title={p.label} aria-label={p.label} aria-pressed={active}
+              onClick={() => set({ kind: 'preset', preset: p.id })} style={avatarTile(active)}
+              dangerouslySetInnerHTML={{ __html: presetSvg(p.id, colors.bg, colors.fg) }} />
+          )
+        })}
+        <button type="button" title={cur?.url ? 'Immagine caricata' : 'Carica immagine'} aria-label={cur?.url ? 'Usa l’immagine caricata' : 'Carica immagine'} aria-pressed={isImage}
+          onClick={() => (isImage || !cur?.url ? fileRef.current?.click() : set({ kind: 'image' }))}
+          style={{ ...avatarTile(isImage), background: '#f3f4f6', color: '#57606a', fontSize: 22 }}>
+          {cur?.url ? <img src={cur.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '+'}
+        </button>
+        <input ref={fileRef} type="file" accept={ACCEPTED.join(',')} hidden onChange={pick} />
+      </div>
+      {cur && cur.kind === 'preset' && (
+        <div className="row wrap" style={{ marginTop: 10, gap: 16 }}>
+          <ColorField label="Sfondo" value={cur.bg} onChange={(v) => set({ bg: v })} />
+          <ColorField label="Figura" value={cur.fg} onChange={(v) => set({ fg: v })} />
+        </div>
+      )}
+      {isImage && (
+        <div className="row wrap" style={{ marginTop: 10, gap: 10 }}>
+          <img src={cur.url} alt="Anteprima immagine" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '3px solid #fff', boxShadow: '0 0 0 1px var(--border, #ddd)' }} />
+          <button type="button" className="btn sm" disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? 'Caricamento…' : 'Cambia immagine'}</button>
+          <button type="button" className="btn sm danger" disabled={uploading} onClick={onRemove}>Rimuovi immagine</button>
+        </div>
+      )}
+      {cropFile && <AvatarCropper file={cropFile} busy={uploading} onCancel={() => setCropFile(null)} onDone={upload} />}
+    </>
   )
 }
 
