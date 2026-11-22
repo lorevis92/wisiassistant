@@ -131,7 +131,7 @@ function styles(w, mode) {
   // filled surfaces (user bubble, send, launcher): the brand gradient by default, otherwise the client's colour
   const fillBg = brand ? 'linear-gradient(115deg,#22E6D6 0%,#5FA8F2 50%,#8B6CFF 100%)' : w.color
   // links inside assistant bubbles: the client colour when it reads on that bubble, else a readable accent
-  const linkLight = brand ? '#0A8E86' : L < 0.4 ? w.color : '#141824'
+  const linkLight = brand ? '#07766F' : L < 0.4 ? w.color : '#141824'
   const linkDark = brand ? '#5CF2E5' : L > 0.18 ? w.color : '#8FD0E2'
   return `
 :host{all:initial;${mode === 'widget' ? '' : 'display:block;height:100%;'}}

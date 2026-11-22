@@ -142,10 +142,10 @@
   --textSecondary: #4A5266;
   --textMuted: #646C80;
 
-  --primary: #0A8E86;             /* teal dark enough for text on white (4.6:1) */
-  --primaryHover: #077A73;
-  --primaryLight: rgba(10, 142, 134, 0.08);
-  --primaryBorder: rgba(10, 142, 134, 0.35);
+  --primary: #07766F;             /* teal dark enough for text: 5.5:1 on white, 5:1 on --surfaceAlt */
+  --primaryHover: #05645E;
+  --primaryLight: rgba(7, 118, 111, 0.08);
+  --primaryBorder: rgba(7, 118, 111, 0.35);
   --accent: #E0384A;
   --accentSoft: rgba(224, 56, 74, 0.09);
 
@@ -164,7 +164,7 @@
 
   --glow: 0 0 0 1px rgba(20, 201, 187, 0.35), 0 8px 24px -10px rgba(20, 201, 187, 0.55), 0 10px 30px -14px rgba(123, 86, 255, 0.5);
   --glow-soft: 0 0 22px -8px rgba(123, 86, 255, 0.35);
-  --focus: 0 0 0 2px var(--bg), 0 0 0 4px rgba(10, 142, 134, 0.6);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px rgba(7, 118, 111, 0.6);
 
   --shadow-1: 0 1px 2px rgba(15, 20, 50, 0.05), 0 0 0 0 transparent;
   --shadow-2: 0 18px 40px -20px rgba(15, 20, 50, 0.25), 0 2px 6px -2px rgba(15, 20, 50, 0.08);
