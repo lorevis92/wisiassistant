@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, requireAdmin } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireClientAccess } from '../_shared/common.ts'
 import { deliverToChannel } from '../_shared/channels.ts'
 import { runMessage } from '../_shared/rag.ts'
 
@@ -12,7 +12,7 @@ import { runMessage } from '../_shared/rag.ts'
  *                                                                            without a cursor returns no messages, just `cursor` (latest id)
  *  - feedback    { message_id, value }                                     → 👍/👎
  *  - end         { client_slug, conversation_id }                         → visitor ended the chat ("Termina chat"): open → resolved
- *  - human_reply { conversation_id, content }  (admin only)               → operator reply, delivered to channel
+ *  - human_reply { conversation_id, content }  (members with access to the conversation's client)               → operator reply, delivered to channel
  *
  * The RAG pipeline lives in _shared/rag.ts (runMessage) and is reused by the channel webhooks.
  */
@@ -32,7 +32,9 @@ Deno.serve(async (req) => {
       case 'feedback': return await modeFeedback(sb, body)
       case 'end': return await modeEnd(sb, body)
       case 'human_reply': {
-        const denied = await requireAdmin(req)
+        const { data: c } = await sb.from('wa_conversations').select('client_id').eq('id', body.conversation_id).maybeSingle()
+        if (!c) return err('Conversazione non trovata', 404)
+        const denied = await requireClientAccess(req, c.client_id)
         if (denied) return denied
         return await modeHumanReply(sb, body)
       }

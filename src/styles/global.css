@@ -307,3 +307,9 @@ label.chip:has(input:checked) { border-color: var(--primaryBorder); background: 
 @keyframes sd-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sd-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; } }
+
+/* account block (sidebar) */
+.account { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.account-org { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--heading); font-size: var(--fs-sm); min-width: 0; }
+.account-org b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-mail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

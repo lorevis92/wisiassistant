@@ -5,36 +5,31 @@ import ChatThread from './ChatThread'
 import { fmtDateTime } from '../lib/utils'
 
 /**
- * Live human handoff inbox. Shows conversations with status 'escalated' or 'human' (operator took over).
+ * Live human handoff inbox of ONE client (there is no cross-client inbox: access is per client). Shows conversations with status 'escalated' or 'human' (operator took over).
  * The operator's replies are sent through the `chat` function with mode 'human_reply' so they reach
  * every channel (widget polls / Telegram / WhatsApp are delivered by the function).
  */
-export default function InboxView({ clientId = null }) {
+export default function InboxView({ clientId }) {
   const [list, setList] = useState(null)
   const [active, setActive] = useState(null)
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
   const [toast, setToast] = useToast()
-  const [clients, setClients] = useState({})
   const [showResolved, setShowResolved] = useState(false)
   const bottom = useRef(null)
 
   const load = async () => {
     let q = supabase.from('wa_conversations').select('*').order('updated_at', { ascending: false }).limit(200)
     q = showResolved ? q.in('status', ['escalated', 'human', 'resolved']) : q.in('status', ['escalated', 'human'])
-    if (clientId) q = q.eq('client_id', clientId)
+    q = q.eq('client_id', clientId)
     const { data } = await q
     setList(data || [])
-    if (!clientId) {
-      const { data: cs } = await supabase.from('wa_clients').select('id,name')
-      const m = {}; for (const c of cs || []) m[c.id] = c.name; setClients(m)
-    }
   }
   useEffect(() => { load() }, [clientId, showResolved])
 
   useEffect(() => {
-    const ch = supabase.channel(`inbox-${clientId || 'all'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_conversations' }, () => load())
+    const ch = supabase.channel(`inbox-${clientId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wa_conversations', filter: `client_id=eq.${clientId}` }, () => load())
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_messages' }, (p) => {
         if (p.new.conversation_id === active) setMessages((m) => [...m, p.new])
       }).subscribe()
@@ -77,7 +72,7 @@ export default function InboxView({ clientId = null }) {
           {list?.map((c) => (
             <button type="button" key={c.id} className={`list-item${active === c.id ? ' active' : ''}`} onClick={() => setActive(c.id)} aria-current={active === c.id ? 'true' : undefined}>
               <div className="row between" style={{ gap: 8 }}>
-                <span className="who">{!clientId && clients[c.client_id] ? <span className="secondary">{clients[c.client_id]} / </span> : ''}{c.lead_name || c.visitor_label || `Visitatore ${c.id.slice(0, 6)}`}</span>
+                <span className="who">{c.lead_name || c.visitor_label || `Visitatore ${c.id.slice(0, 6)}`}</span>
                 <StatusBadge status={c.status} />
               </div>
               <div className="preview">{c.last_message || ''}</div>

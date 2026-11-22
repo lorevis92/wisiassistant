@@ -1,7 +1,9 @@
 """
 Sardesk — crawler service (Crawl4AI + FastAPI), deployed on Railway/Render.
 
-Endpoints (Bearer = Supabase user JWT, verified against Supabase Auth; the user must be in wa_admins):
+Endpoints (Bearer = Supabase user JWT verified against Supabase Auth, or CRAWLER_SECRET for system calls).
+Every endpoint with a client_id checks, server side, that the user can access that client (database function
+wa_can_access_client: owner/admin of the client's organization, or collaborator with the client assigned).
   POST /map    {client_id, url}            → discovers every URL of the site (sitemap + link discovery), no content download
   POST /crawl  {client_id, urls: [...]}    → background job: fetch → markdown → chunk (heading hierarchy + anchors) → embed → Supabase
   POST /recrawl {client_id}                → re-map + re-crawl one client now (same flow as the automatic one)
@@ -83,7 +85,8 @@ SB_HEADERS = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}", "
 
 
 # ----------------------------------------------------------------------------- auth
-async def require_admin(authorization: str = Header(default="")):
+async def require_auth(authorization: str = Header(default="")):
+    """System call (CRAWLER_SECRET) or a valid Supabase user JWT. Client access is checked per endpoint."""
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(401, "Token mancante")
@@ -91,13 +94,33 @@ async def require_admin(authorization: str = Header(default="")):
         return {"service": True}
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SERVICE_KEY, "Authorization": f"Bearer {token}"})
-    if r.status_code != 200:
+    if r.status_code != 200 or not r.json().get("id"):
         raise HTTPException(401, "Non autorizzato")
-    user = r.json()
-    # shared DB: a valid JWT is not enough, the user must be listed in wa_admins
-    if not user.get("id") or not await sb("GET", "wa_admins", params={"user_id": f"eq.{user['id']}", "select": "user_id"}):
-        raise HTTPException(403, "Accesso non autorizzato")
-    return user
+    return {"service": False, "token": token, "id": r.json()["id"]}
+
+
+async def require_system(auth=Depends(require_auth)):
+    """Scheduler only (pg_cron with CRAWLER_SECRET)."""
+    if not auth.get("service"):
+        raise HTTPException(403, "Riservato al sistema")
+    return auth
+
+
+async def check_client_access(auth: dict, client_id: str) -> None:
+    """Asks the database as the calling user (their JWT): owner/admin of the client's org, or collaborator with it assigned."""
+    if auth.get("service"):
+        return
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", client_id or ""):
+        raise HTTPException(400, "client_id non valido")
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(f"{SUPABASE_URL}/rest/v1/rpc/wa_can_access_client",
+                         headers={"apikey": SERVICE_KEY, "Authorization": f"Bearer {auth['token']}", "Content-Type": "application/json"},
+                         json={"p_client": client_id})
+    if r.status_code != 200:
+        log.error("access check failed (%s): %s", r.status_code, r.text[:200])
+        raise HTTPException(500, "Controllo accessi non disponibile: esegui la migrazione 0006_organizations.sql")
+    if r.json() is not True:
+        raise HTTPException(403, "Non hai accesso a questo cliente")
 
 
 # ----------------------------------------------------------------------------- supabase helpers
@@ -399,7 +422,8 @@ def client_rules(client: dict) -> tuple[list[str], list[str]]:
 
 
 @app.post("/map")
-async def map_site(req: MapReq, _=Depends(require_admin)):
+async def map_site(req: MapReq, auth=Depends(require_auth)):
+    await check_client_access(auth, req.client_id)
     client = await get_client(req.client_id)
     await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": "mapping"})
     try:
@@ -457,7 +481,8 @@ async def create_job(cid: str, status: str, total: int, trigger: str) -> dict:
 
 
 @app.post("/crawl")
-async def crawl(req: CrawlReq, bg: BackgroundTasks, _=Depends(require_admin)):
+async def crawl(req: CrawlReq, bg: BackgroundTasks, auth=Depends(require_auth)):
+    await check_client_access(auth, req.client_id)
     client = await get_client(req.client_id)
     urls = sorted({u for u in req.urls if u.startswith("http")})  # never manual content (wisi://…)
     if not urls:
@@ -713,7 +738,7 @@ class RecrawlReq(BaseModel):
 
 
 @app.post("/recrawl/scheduled")
-async def recrawl_scheduled(bg: BackgroundTasks, _=Depends(require_admin)):
+async def recrawl_scheduled(bg: BackgroundTasks, _=Depends(require_system)):
     """Called daily by pg_cron (job wa_recrawl): re-crawls every client whose frequency is due."""
     if _recrawl_lock.locked():
         log.info("scheduled recrawl: previous run still in progress, skipping")
@@ -728,8 +753,9 @@ async def recrawl_scheduled(bg: BackgroundTasks, _=Depends(require_admin)):
 
 
 @app.post("/recrawl")
-async def recrawl_now(req: RecrawlReq, bg: BackgroundTasks, _=Depends(require_admin)):
+async def recrawl_now(req: RecrawlReq, bg: BackgroundTasks, auth=Depends(require_auth)):
     """'Run now' button: same flow as the automatic re-crawl, for one client."""
+    await check_client_access(auth, req.client_id)
     client = await get_client(req.client_id)
     if not client.get("domain"):
         raise HTTPException(400, "Il cliente non ha un sito principale impostato")

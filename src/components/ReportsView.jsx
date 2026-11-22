@@ -7,9 +7,8 @@ import { fmtDate, fmtDateTime, daysAgo, todayIso } from '../lib/utils'
  * Periodic AI reports. A schedule (per client) generates a draft automatically (Supabase cron → generate-report).
  * Drafts land here; the admin edits, approves and sends (send-report via Resend). Auto-send can be enabled per client.
  */
-export default function ReportsView({ client = null }) {
+export default function ReportsView({ client }) {
   const [reports, setReports] = useState(null)
-  const [clients, setClients] = useState({})
   const [edit, setEdit] = useState(null)
   const [toast, setToast] = useToast()
   const [genOpen, setGenOpen] = useState(false)
@@ -18,10 +17,9 @@ export default function ReportsView({ client = null }) {
 
   const load = async () => {
     let q = supabase.from('wa_reports').select('*').order('created_at', { ascending: false }).limit(100)
-    if (client) q = q.eq('client_id', client.id)
+    q = q.eq('client_id', client.id)
     const { data } = await q
     setReports(data || [])
-    if (!client) { const { data: cs } = await supabase.from('wa_clients').select('id,name'); const m = {}; for (const c of cs || []) m[c.id] = c.name; setClients(m) }
   }
   useEffect(() => { load() }, [client?.id])
 
@@ -58,12 +56,11 @@ export default function ReportsView({ client = null }) {
       <div className="card flush">
         {reports?.length === 0 ? <EmptyState icon="chart" title="Nessun report ancora">I report arrivano qui come bozze secondo la cadenza scelta in Impostazioni{client ? ', oppure generane uno adesso.' : '.'}</EmptyState> : (
         <table className="table">
-          <thead><tr>{!client && <th>Cliente</th>}<th>Periodo</th><th>Oggetto</th><th>Stato</th><th>Creato</th><th>Inviato</th><th></th></tr></thead>
+          <thead><tr><th>Periodo</th><th>Oggetto</th><th>Stato</th><th>Creato</th><th>Inviato</th><th></th></tr></thead>
           <tbody>
             {reports === null && <tr><td colSpan={7} className="empty">Caricamento…</td></tr>}
             {reports?.map((r) => (
               <tr key={r.id}>
-                {!client && <td>{clients[r.client_id]}</td>}
                 <td className="mono small">{fmtDate(r.period_start)} → {fmtDate(r.period_end)}</td>
                 <td><span className="truncate" style={{ maxWidth: 360 }}>{r.subject}</span></td>
                 <td><StatusBadge status={r.status} /></td>

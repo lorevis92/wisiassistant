@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { Modal, StatusBadge, Toast, useToast, Stat, EmptyState } from '../components/ui'
 import { fmtDate, slugify } from '../lib/utils'
 import { DEFAULT_MODEL, modelLabel } from '../lib/models'
+import { useAuth } from '../lib/auth'
 
 export default function Clients() {
   const [clients, setClients] = useState(null)
@@ -12,16 +13,20 @@ export default function Clients() {
   const [form, setForm] = useState({ name: '', domain: '', slug: '' })
   const [toast, setToast] = useToast()
   const nav = useNavigate()
+  // the database returns only the clients this user can access (RLS); here we narrow to the organization in use
+  const { org, isOrgAdmin, legacy } = useAuth()
 
   const load = async () => {
-    const { data } = await supabase.from('wa_clients').select('*').order('created_at', { ascending: false })
+    let q = supabase.from('wa_clients').select('*').order('created_at', { ascending: false })
+    if (!legacy && org?.id) q = q.eq('org_id', org.id)
+    const { data } = await q
     setClients(data || [])
     const { data: s } = await supabase.from('wa_client_stats').select('*')
     const m = {}
     for (const r of s || []) m[r.client_id] = r
     setStats(m)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [org?.id])
 
   const create = async (e) => {
     e.preventDefault()
@@ -29,7 +34,7 @@ export default function Clients() {
     if (domain && !/^https?:\/\//i.test(domain)) domain = `https://${domain}`
     const slug = form.slug || slugify(form.name)
     const { data, error } = await supabase.from('wa_clients').insert({
-      name: form.name.trim(), domain, slug, model: DEFAULT_MODEL,
+      name: form.name.trim(), domain, slug, model: DEFAULT_MODEL, ...(!legacy && org?.id ? { org_id: org.id } : {}),
     }).select().single()
     if (error) return setToast(error.message)
     setOpen(false)
@@ -38,8 +43,8 @@ export default function Clients() {
 
   const total = clients?.length || 0
   const ready = clients?.filter((c) => c.status === 'ready').length || 0
-  const convs = Object.values(stats).reduce((a, s) => a + (s.conversations_30d || 0), 0)
-  const openEsc = Object.values(stats).reduce((a, s) => a + (s.open_escalations || 0), 0)
+  const convs = (clients || []).reduce((a, c) => a + (stats[c.id]?.conversations_30d || 0), 0)
+  const openEsc = (clients || []).reduce((a, c) => a + (stats[c.id]?.open_escalations || 0), 0)
 
   return (
     <div className="page">
@@ -47,12 +52,12 @@ export default function Clients() {
       <div className="page-head">
         <div>
           <h1>Clienti</h1>
-          <p className="lead" style={{ margin: '6px 0 0' }}>Ogni cliente ha la propria knowledge base, il proprio modello AI e i propri canali.</p>
+          <p className="lead" style={{ margin: '6px 0 0' }}>{isOrgAdmin ? 'Ogni cliente ha la propria knowledge base, il proprio modello AI e i propri canali.' : 'I clienti che ti sono stati assegnati.'}</p>
         </div>
-        <button className="btn primary" onClick={() => setOpen(true)}>
+        {isOrgAdmin && <button className="btn primary" onClick={() => setOpen(true)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           Nuovo cliente
-        </button>
+        </button>}
       </div>
 
       <div className="grid4" style={{ marginBottom: 24 }}>
@@ -64,9 +69,13 @@ export default function Clients() {
 
       <div className="card flush">
         {clients?.length === 0 ? (
-          <EmptyState icon="people" title="Ancora nessun cliente" action={<button className="btn primary" onClick={() => setOpen(true)}>Crea il primo cliente</button>}>
-            Crea un cliente, mappa il suo sito e in pochi minuti l’assistente è pronto da incollare nel sito.
-          </EmptyState>
+          isOrgAdmin ? (
+            <EmptyState icon="people" title="Ancora nessun cliente" action={<button className="btn primary" onClick={() => setOpen(true)}>Crea il primo cliente</button>}>
+              Crea un cliente, mappa il suo sito e in pochi minuti l’assistente è pronto da incollare nel sito.
+            </EmptyState>
+          ) : (
+            <EmptyState icon="people" title="Nessun cliente assegnato">Quando un amministratore ti assegna un cliente, lo trovi qui.</EmptyState>
+          )
         ) : (
         <table className="table">
           <thead>

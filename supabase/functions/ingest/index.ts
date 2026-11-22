@@ -1,18 +1,21 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, requireAdmin, embed, chunkMarkdown } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireClientAccess, embed, chunkMarkdown } from '../_shared/common.ts'
 
 /**
- * Ingests manual knowledge (admin only):
+ * Ingests manual knowledge (members with access to the client):
  *  { client_id, kind: 'faq'|'text', title, content, link? }
  *  { client_id, kind: 'document', storage_path, title }   → reads from the `wa-documents` bucket (PDF/DOCX/TXT/MD)
  * Creates a `wa_pages` row (url = wisi://doc/<uuid>), chunks + embeds into `wa_chunks`.
  */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  const denied = await requireAdmin(req)
-  if (denied) return denied
   let b: any
   try { b = await req.json() } catch { return err('JSON non valido') }
+  const denied = await requireClientAccess(req, b.client_id)
+  if (denied) return denied
+  // a document must live in the client's own folder of the bucket
+  if (b.kind === 'document' && !String(b.storage_path || '').startsWith(`${b.client_id}/`)) return err('Percorso del documento non valido', 403)
+  if (!['document', 'faq', 'text'].includes(b.kind)) return err('Tipo di contenuto non valido')
   const sb = admin()
 
   const pageId = crypto.randomUUID()

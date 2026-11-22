@@ -16,34 +16,52 @@ export const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 export const err = (message: string, status = 400) => json({ error: message }, status)
 
-/** Returns the authenticated user if the request carries a valid user JWT, else null (admin check: requireAdmin). */
-export async function getUser(req: Request) {
-  const auth = req.headers.get('Authorization') || ''
-  const token = auth.replace(/^Bearer\s+/i, '')
-  if (!token || token === ANON_KEY) return null
-  const sb = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } })
-  const { data } = await sb.auth.getUser()
-  return data.user || null
-}
+// ------------------------------------------------------------------ ACCESS CONTROL
+// Every check is done here, server side, with the caller's own JWT: the database functions wa_can_access_client /
+// wa_is_org_admin (migration 0006) decide, never the frontend. Public widget and channels do not come through here.
+
+const bearer = (req: Request) => (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
 
 export function isServiceRole(req: Request) {
-  const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+  const token = bearer(req)
   return !!token && token === SERVICE_KEY
 }
 
-/** True if the user is listed in wa_admins (the shared DB has users of other apps too). */
-export async function isAdmin(userId: string) {
-  const { data } = await admin().from('wa_admins').select('user_id').eq('user_id', userId).maybeSingle()
-  return !!data
+/** Supabase client acting as the caller (RLS and auth.uid() apply). */
+export function userClient(req: Request) {
+  return createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${bearer(req)}` } }, auth: { persistSession: false } })
 }
 
-/** Admin gate: null if the request is service role or a valid JWT of a wa_admins user, else a 401/403 response. */
-export async function requireAdmin(req: Request): Promise<Response | null> {
+/** Returns the authenticated user if the request carries a valid user JWT, else null. */
+export async function getUser(req: Request) {
+  const token = bearer(req)
+  if (!token || token === ANON_KEY || token === SERVICE_KEY) return null
+  const { data } = await userClient(req).auth.getUser()
+  return data.user || null
+}
+
+async function rpcBool(req: Request, fn: string, args: Record<string, unknown>) {
+  const { data, error } = await userClient(req).rpc(fn, args)
+  if (error) {
+    console.error(`access check ${fn} failed:`, error.message)
+    throw Object.assign(new Error('Controllo accessi non disponibile: esegui la migrazione 0006_organizations.sql'), { status: 500 })
+  }
+  return data === true
+}
+
+/** Gate for one client: service role, or a user who is owner/admin of the client's organization or has it assigned. */
+export async function requireClientAccess(req: Request, clientId: unknown): Promise<Response | null> {
   if (isServiceRole(req)) return null
+  if (typeof clientId !== 'string' || !/^[0-9a-f-]{36}$/i.test(clientId)) return err('client_id mancante o non valido', 400)
   const user = await getUser(req)
   if (!user) return err('Non autorizzato', 401)
-  if (!(await isAdmin(user.id))) return err('Accesso non autorizzato', 403)
+  if (!(await rpcBool(req, 'wa_can_access_client', { p_client: clientId }))) return err('Non hai accesso a questo cliente', 403)
   return null
+}
+
+/** Gate for jobs run by the scheduler (pg_cron with the service role key) only. */
+export function requireServiceRole(req: Request): Response | null {
+  return isServiceRole(req) ? null : err('Riservato al sistema', 403)
 }
 
 // ------------------------------------------------------------------ EMBEDDINGS

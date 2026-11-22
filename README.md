@@ -48,6 +48,7 @@ wisiassistant/
    supabase functions deploy ingest
    supabase functions deploy generate-report --no-verify-jwt
    supabase functions deploy send-report
+   supabase functions deploy send-invite
    supabase functions deploy telegram-webhook --no-verify-jwt
    supabase functions deploy whatsapp-webhook --no-verify-jwt
    ```
@@ -101,6 +102,41 @@ Il widget ha un suo tema in Impostazioni → Aspetto (automatico = segue il sito
    https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<PROJECT_REF>.supabase.co/functions/v1/telegram-webhook?client=<SLUG>&secret_token=<TELEGRAM_WEBHOOK_SECRET>
    ```
 6. WhatsApp/Instagram/Messenger: Meta for Developers → app → Webhooks → URL `https://<PROJECT_REF>.supabase.co/functions/v1/whatsapp-webhook?client=<SLUG>`, verify token = `META_VERIFY_TOKEN`; salva Phone Number ID e access token in Impostazioni.
+
+## Organizzazioni e ruoli
+
+Ogni cliente appartiene a un'**organizzazione** (`wa_organizations`). Le persone ne fanno parte (`wa_org_members`) con un ruolo:
+
+| Ruolo | Cosa può fare |
+|---|---|
+| **Owner** (uno solo) | tutto; non può essere rimosso né declassato |
+| **Admin** | tutti i clienti dell'organizzazione, creare clienti, gestire il team (ruoli, assegnazioni, rimozioni, inviti anche admin) |
+| **Collaboratore** | solo i clienti assegnati (`wa_client_assignments`): conversazioni, knowledge, impostazioni, report. Non vede gli altri clienti nemmeno per nome. Può invitare solo collaboratori, solo sui propri clienti |
+
+- **Inviti** (pagina *Team*): email, ruolo, clienti, scadenza. Il link è monouso e vale solo per quell'email; si vede solo
+  alla creazione (in tabella c'è solo l'hash). Se `RESEND_API_KEY` è impostata parte anche l'email (funzione `send-invite`).
+  Chi apre il link crea l'account o accede, ed entra con quel ruolo.
+- **Iscrizione libera**: spenta. Per attivarla in futuro: `update public.wa_settings set value = 'true' where key = 'public_signup';`
+  (chi si iscrive crea la propria organizzazione e ne è owner).
+- **Piano e limiti**: `wa_organizations.plan` e `limits` (`clients`, `members`, `messages_per_month`; `null` = illimitato).
+  Clienti e membri sono già controllati dal database; messaggi e pagamenti arriveranno dopo. Si cambiano solo da SQL Editor.
+- **Sicurezza**: tutto passa dalle funzioni SQL `wa_is_member`, `wa_is_org_admin`, `wa_can_access_client`,
+  `wa_can_access_conversation` (security definer, senza ricorsioni): RLS su tutte le tabelle `wa_` e sui bucket
+  `wa-documents` / `wa-avatars`. Le Edge Functions e il crawler verificano lato server l'accesso al cliente con il token
+  dell'utente; i job programmati accettano solo il service role / `CRAWLER_SECRET`. Widget, pagina chat, Telegram e
+  WhatsApp non cambiano (passano dalle funzioni con service role, senza login).
+- Membri, ruoli, assegnazioni e inviti si cambiano **solo** tramite funzioni (`wa_create_invite`, `wa_accept_invite`,
+  `wa_set_member_role`, `wa_remove_member`, `wa_set_client_assignments`, …): le tabelle non accettano scritture dirette.
+
+### Migrazione (una volta)
+1. Supabase → SQL Editor → esegui `supabase/migrations/0006_organizations.sql`. È idempotente: crea l'organizzazione
+   "Sardesk", rende **owner** il primo utente di `wa_admins` (in ordine di creazione) e **admin** gli altri, assegna tutti
+   i clienti a Sardesk. Alla fine stampa un riepilogo (membri, owner, clienti).
+2. Deploy delle funzioni: `chat`, `ingest`, `generate-report`, `send-report`, `send-invite` (nuova) e redeploy del crawler.
+3. Il frontend (Vercel) funziona anche prima della migrazione (modalità compatibile: accesso come prima).
+
+**Tornare indietro**: esegui `supabase/migrations/0006_organizations_rollback.sql` (rimette l'accesso "solo wa_admins",
+non cancella dati) e ripubblica la versione precedente di funzioni e crawler. `wa_is_admin()` resta disponibile in entrambi i casi.
 
 ## Sviluppo locale
 ```bash

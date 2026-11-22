@@ -1,19 +1,19 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, requireAdmin, llm } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireClientAccess, requireServiceRole, llm } from '../_shared/common.ts'
 import { sendReport } from '../_shared/report.ts'
 
 /**
  * Generates an AI report for a client and a period.
- *  - manual:    { client_id, period_start, period_end }  (admin)       → draft
+ *  - manual:    { client_id, period_start, period_end }  (members with access to the client) → draft
  *  - scheduled: { mode: 'scheduled' } (called by pg_cron with service key) → for each client whose cadence is due today
  *               creates a draft, or sends immediately when report_auto_send = true.
  */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  const denied = await requireAdmin(req)
-  if (denied) return denied
   let b: any
   try { b = await req.json() } catch { b = {} }
+  const denied = b.mode === 'scheduled' ? requireServiceRole(req) : await requireClientAccess(req, b.client_id)
+  if (denied) return denied
   const sb = admin()
 
   if (b.mode === 'scheduled') {

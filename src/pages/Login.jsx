@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { BRAND } from '../lib/brand'
 import { Logo, Mark, ThemeSwitch } from '../components/Brand'
+import { usePublicSignup } from './Signup'
 
 /** Stepped-diamond band after the geometry of Sardinian hand weaving, drawn as a thin neon line of motifs. */
 function WeaveBand() {
@@ -32,8 +33,9 @@ export default function Login() {
   const [busy, setBusy] = useState(false)
   const nav = useNavigate()
   const { session, denied } = useAuth()
+  const signup = usePublicSignup()
 
-  // navigate only once AuthProvider has confirmed the user is in wa_admins
+  // navigate once AuthProvider has loaded the user's organizations (no organization → the app shows NoAccess)
   useEffect(() => { if (session) nav('/') }, [session, nav])
   useEffect(() => { document.title = `Accedi · ${BRAND}` }, [])
 
@@ -78,7 +80,9 @@ export default function Login() {
           </div>
           {(err || denied) && <div className="callout danger" role="alert" style={{ marginBottom: 16 }}>{err || 'Questo account non ha accesso al pannello.'}</div>}
           <button className="btn primary" disabled={busy} style={{ width: '100%', padding: '13px 16px', fontSize: 15 }}>{busy ? 'Accesso in corso…' : 'Accedi'}</button>
-          <p className="hint" style={{ marginTop: 18 }}>L’accesso è riservato agli amministratori abilitati.</p>
+          <p className="hint" style={{ marginTop: 18 }}>
+            {signup ? <>Non hai un account? <Link to="/signup">Creane uno</Link></> : 'Si entra solo su invito: se l’hai ricevuto, apri il link dell’email.'}
+          </p>
         </form>
       </section>
 

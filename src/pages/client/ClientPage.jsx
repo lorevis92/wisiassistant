@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom'
 import { standaloneUrl, BRAND } from '../../lib/brand'
 import { supabase } from '../../lib/supabase'
-import { StatusBadge, Spinner } from '../../components/ui'
+import { StatusBadge, Spinner, EmptyState } from '../../components/ui'
 import Overview from './Overview'
 import Crawling from './Crawling'
 import Knowledge from './Knowledge'
@@ -27,10 +27,14 @@ export default function ClientPage() {
   const { id } = useParams()
   const [client, setClient] = useState(null)
 
+  const [missing, setMissing] = useState(false)
   const reload = async () => {
-    const { data } = await supabase.from('wa_clients').select('*').eq('id', id).single()
-    setClient(data)
+    // RLS returns nothing for a client the user cannot access (not in the org, or not assigned to a collaborator)
+    const { data } = await supabase.from('wa_clients').select('*').eq('id', id).maybeSingle()
+    setMissing(!data)
+    if (data) setClient(data)
   }
+
   useEffect(() => { reload() }, [id])
   useEffect(() => { if (client?.name) document.title = `${client.name} · ${BRAND}`; return () => { document.title = BRAND } }, [client?.name])
 
@@ -41,6 +45,15 @@ export default function ClientPage() {
     return () => { supabase.removeChannel(ch) }
   }, [id])
 
+  if (missing) {
+    return (
+      <div className="page">
+        <EmptyState icon="people" title="Cliente non disponibile" action={<Link className="btn" to="/">Torna ai clienti</Link>}>
+          Questo cliente non esiste oppure non ti è stato assegnato.
+        </EmptyState>
+      </div>
+    )
+  }
   if (!client) return <Spinner />
 
   return (
