@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth, ROLE_LABEL } from '../lib/auth'
@@ -12,6 +13,14 @@ const TABS = [
   { to: '/team', label: 'Team', icon: <Icon d={<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 13.8c2.1.8 3.5 3 3.5 6.2" /></>} /> },
 ]
 // Inbox and Report are per client (tabs in the client page): the global navigation holds only app-wide sections.
+
+const INVITES_ICON = <Icon d={<><path d="M3 7l9 6 9-6" /><rect x="3" y="5" width="18" height="14" rx="2" /></>} />
+
+/** Navigation entries: "Inviti ricevuti" appears only while there are invitations to answer. */
+function useTabs() {
+  const { invites } = useAuth()
+  return invites.length ? [...TABS, { to: '/invites', label: 'Inviti', icon: INVITES_ICON, count: invites.length }] : TABS
+}
 
 function useNav() {
   const loc = useLocation()
@@ -28,13 +37,16 @@ function SignOut({ className = 'btn ghost sm' }) {
 export function Sidebar() {
   const { session } = useAuth()
   const isActive = useNav()
+  const tabs = useTabs()
   return (
     <aside className="sidebar">
       <Link to="/" className="brand-link" aria-label={`${BRAND}, vai ai clienti`}><Logo /></Link>
       {session && (
         <nav className="sidenav" aria-label="Sezioni">
-          {TABS.map((t) => (
-            <NavLink key={t.to} to={t.to} className={() => (isActive(t.to) ? 'active' : '')} aria-current={isActive(t.to) ? 'page' : undefined}>{t.icon}{t.label}</NavLink>
+          {tabs.map((t) => (
+            <NavLink key={t.to} to={t.to} className={() => (isActive(t.to) ? 'active' : '')} aria-current={isActive(t.to) ? 'page' : undefined}>
+              {t.icon}{t.label}{t.count ? <span className="nav-count" aria-label={`${t.count} da rispondere`}>{t.count}</span> : null}
+            </NavLink>
           ))}
         </nav>
       )}
@@ -68,6 +80,7 @@ function Account() {
 function Topbar() {
   const { session } = useAuth()
   const isActive = useNav()
+  const tabs = useTabs()
   return (
     <>
       <header className="topbar">
@@ -76,7 +89,7 @@ function Topbar() {
       </header>
       {session && (
         <nav className="mobilenav" aria-label="Sezioni">
-          {TABS.map((t) => <NavLink key={t.to} to={t.to} className={() => (isActive(t.to) ? 'active' : '')}>{t.label}</NavLink>)}
+          {tabs.map((t) => <NavLink key={t.to} to={t.to} className={() => (isActive(t.to) ? 'active' : '')}>{t.label}{t.count ? ` (${t.count})` : ''}</NavLink>)}
         </nav>
       )}
     </>
@@ -91,6 +104,23 @@ export function Footer() {
   )
 }
 
+/** Shown right after sign-in while there are invitations to answer (dismissed for this visit). */
+function InvitesBanner() {
+  const { invites } = useAuth()
+  const loc = useLocation()
+  const [hidden, setHidden] = useState(false)
+  if (!invites.length || hidden || loc.pathname === '/invites') return null
+  return (
+    <div className="invite-banner" role="status">
+      <span>{invites.length === 1 ? `${invites[0].org_name} ti ha invitato a entrare nel team.` : `Hai ${invites.length} inviti da altre organizzazioni.`}</span>
+      <span className="row" style={{ gap: 8 }}>
+        <Link className="btn sm primary" to="/invites">Vedi {invites.length === 1 ? 'invito' : 'inviti'}</Link>
+        <button className="btn sm ghost" aria-label="Nascondi" onClick={() => setHidden(true)}>Più tardi</button>
+      </span>
+    </div>
+  )
+}
+
 export function Shell({ children, bare = false }) {
   if (bare) return children
   return (
@@ -98,6 +128,7 @@ export function Shell({ children, bare = false }) {
       <Sidebar />
       <div className="main">
         <Topbar />
+        <InvitesBanner />
         <main style={{ flex: 1 }}>{children}</main>
         <Footer />
       </div>

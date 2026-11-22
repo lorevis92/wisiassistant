@@ -113,11 +113,19 @@ Ogni cliente appartiene a un'**organizzazione** (`wa_organizations`). Le persone
 | **Admin** | tutti i clienti dell'organizzazione, creare clienti, gestire il team (ruoli, assegnazioni, rimozioni, inviti anche admin) |
 | **Collaboratore** | solo i clienti assegnati (`wa_client_assignments`): conversazioni, knowledge, impostazioni, report. Non vede gli altri clienti nemmeno per nome. Può invitare solo collaboratori, solo sui propri clienti |
 
-- **Inviti** (pagina *Team*): email, ruolo, clienti, scadenza. Il link è monouso e vale solo per quell'email; si vede solo
-  alla creazione (in tabella c'è solo l'hash). Se `RESEND_API_KEY` è impostata parte anche l'email (funzione `send-invite`).
-  Chi apre il link crea l'account o accede, ed entra con quel ruolo.
-- **Iscrizione libera**: spenta. Per attivarla in futuro: `update public.wa_settings set value = 'true' where key = 'public_signup';`
-  (chi si iscrive crea la propria organizzazione e ne è owner).
+- **Inviti** (pagina *Team*, migrazione 0007): email, ruolo, clienti, scadenza. Il sistema guarda se esiste già un account
+  confermato con quell'email:
+  - **nessun account** → email d'invito di Supabase Auth (`inviteUserByEmail`, funzione `send-invite`). La persona apre il
+    link, sceglie la password su `/welcome` e, con l'email verificata, entra **da sola** (`wa_claim_invites` a ogni accesso);
+  - **account esistente** → l'invito compare nell'app (avviso dopo l'accesso e voce *Inviti* nel menu) con **Accetta / Rifiuta**;
+    l'email parte solo se Resend è configurato (`RESEND_API_KEY`), e la finestra d'invito lo dice.
+  - Sempre disponibile anche il **link da copiare** (monouso, solo per quell'email). Ogni ingresso richiede l'email
+    **verificata** e uguale a quella invitata. Stati in Team: inviato, in attesa di accettazione, da consegnare, accettato,
+    rifiutato, scaduto, revocato.
+- **Iscrizione**: chi si registra senza invito non diventa mai owner/admin da solo. Dopo l'accesso vede "Non fai parte di
+  nessuna organizzazione" con gli inviti ricevuti e, solo se l'iscrizione libera è accesa, il pulsante "Crea la tua
+  organizzazione". Iscrizione libera spenta: per attivarla `update public.wa_settings set value = 'true' where key = 'public_signup';`
+  (compare anche la pagina *Registrati*).
 - **Piano e limiti**: `wa_organizations.plan` e `limits` (`clients`, `members`, `messages_per_month`; `null` = illimitato).
   Clienti e membri sono già controllati dal database; messaggi e pagamenti arriveranno dopo. Si cambiano solo da SQL Editor.
 - **Sicurezza**: tutto passa dalle funzioni SQL `wa_is_member`, `wa_is_org_admin`, `wa_can_access_client`,
@@ -128,7 +136,13 @@ Ogni cliente appartiene a un'**organizzazione** (`wa_organizations`). Le persone
 - Membri, ruoli, assegnazioni e inviti si cambiano **solo** tramite funzioni (`wa_create_invite`, `wa_accept_invite`,
   `wa_set_member_role`, `wa_remove_member`, `wa_set_client_assignments`, …): le tabelle non accettano scritture dirette.
 
-### Migrazione (una volta)
+### Migrazione 0007 (flusso inviti)
+Dopo la 0006: SQL Editor → `supabase/migrations/0007_invite_flow.sql` (idempotente) → deploy di `send-invite`.
+In Supabase → Authentication verifica (impostazioni condivise con le altre app, non le cambia il codice):
+*Confirm email* attivo, registrazioni consentite, `<APP_URL>/welcome` e `<APP_URL>/**` tra i Redirect URLs, template
+"Invite user" con un testo adatto anche a Sardesk.
+
+### Migrazione 0006 (una volta)
 1. Supabase → SQL Editor → esegui `supabase/migrations/0006_organizations.sql`. È idempotente: crea l'organizzazione
    "Sardesk", rende **owner** il primo utente di `wa_admins` (in ordine di creazione) e **admin** gli altri, assegna tutti
    i clienti a Sardesk. Alla fine stampa un riepilogo (membri, owner, clienti).

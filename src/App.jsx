@@ -8,6 +8,8 @@ import Team from './pages/Team'
 import Invite from './pages/Invite'
 import Signup from './pages/Signup'
 import NoAccess from './pages/NoAccess'
+import Invites from './pages/Invites'
+import Welcome from './pages/Welcome'
 import Standalone from './pages/Standalone'
 
 function Protected({ children }) {
@@ -27,11 +29,14 @@ export default function App() {
       {/* Public: invitation link and (when enabled in wa_settings) open sign-up */}
       <Route path="/invite/:token" element={<Invite />} />
       <Route path="/signup" element={<Signup />} />
+      {/* landing of the Supabase invitation email: choose a password (joining is automatic) */}
+      <Route path="/welcome" element={<Welcome />} />
 
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Shell><Clients /></Shell></Protected>} />
       <Route path="/clients/:id/*" element={<Protected><Shell><ClientPage /></Shell></Protected>} />
       <Route path="/team" element={<Protected><Shell><Team /></Shell></Protected>} />
+      <Route path="/invites" element={<Protected><Shell><Invites /></Shell></Protected>} />
       {/* Inbox and Report live inside each client now */}
       <Route path="/inbox" element={<Navigate to="/" replace />} />
       <Route path="/reports" element={<Navigate to="/" replace />} />

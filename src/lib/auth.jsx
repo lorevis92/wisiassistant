@@ -8,9 +8,12 @@ import { supabase } from './supabase'
  *  - org / role: the organization in use (remembered when there are several)
  *  - denied: signed in but not a member of any organization (shared Supabase project: users of other apps)
  *  - legacy: the 0006 migration has not been run yet → old model (wa_admins = full access)
+ *  - invites: invitations received by this account (verified email) still to accept / decline (migration 0007)
+ * On every sign-in wa_claim_invites() runs first: someone invited when they had no account joins automatically
+ * (only with a verified email matching the invite; the database checks it).
  */
 const ORG_KEY = 'sardesk-org'
-const AuthCtx = createContext({ session: null, loading: true, denied: false, memberships: [], org: null, role: null, isOrgAdmin: false, legacy: false, refresh: async () => {}, selectOrg: () => {} })
+const AuthCtx = createContext({ session: null, loading: true, denied: false, memberships: [], org: null, role: null, isOrgAdmin: false, legacy: false, invites: [], refresh: async () => {}, refreshInvites: async () => {}, selectOrg: () => {} })
 
 const readOrg = () => { try { return localStorage.getItem(ORG_KEY) } catch { return null } }
 
@@ -22,18 +25,25 @@ async function loadMemberships(userId) {
   return { memberships: ok === true ? [{ org_id: null, role: 'owner', org: { id: null, name: 'Sardesk', plan: 'internal', limits: {} } }] : [], legacy: true }
 }
 
+async function loadInvites() {
+  const { data, error } = await supabase.rpc('wa_my_invites')
+  return error || !Array.isArray(data) ? [] : data
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
   const [memberships, setMemberships] = useState([])
   const [legacy, setLegacy] = useState(false)
   const [orgId, setOrgId] = useState(readOrg)
+  const [invites, setInvites] = useState([])
 
   const apply = useCallback(async (s) => {
-    if (!s) { setSession(null); setMemberships([]); setLoading(false); return }
+    if (!s) { setSession(null); setMemberships([]); setInvites([]); setLoading(false); return }
     setLoading(true)
-    const r = await loadMemberships(s.user.id)
-    setMemberships(r.memberships); setLegacy(r.legacy); setSession(s); setLoading(false)
+    await supabase.rpc('wa_claim_invites').then(() => {}, () => {}) // automatic join for invited new accounts (0007)
+    const [r, inv] = await Promise.all([loadMemberships(s.user.id), loadInvites()])
+    setMemberships(r.memberships); setLegacy(r.legacy); setInvites(inv); setSession(s); setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -57,11 +67,13 @@ export function AuthProvider({ children }) {
     await apply(data.session)
   }, [apply])
 
+  const refreshInvites = useCallback(async () => setInvites(await loadInvites()), [])
+
   const selectOrg = (id) => { try { localStorage.setItem(ORG_KEY, id) } catch { /* ignore */ } setOrgId(id) }
 
   const current = memberships.find((m) => m.org_id === orgId) || memberships[0] || null
   const value = {
-    session, loading, memberships, legacy, refresh, selectOrg,
+    session, loading, memberships, legacy, refresh, selectOrg, invites, refreshInvites,
     denied: !!session && !loading && memberships.length === 0,
     org: current?.org || null,
     role: current?.role || null,

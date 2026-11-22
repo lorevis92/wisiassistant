@@ -30,7 +30,7 @@ export default function Team() {
     if (!org?.id) return
     const [{ data: cs }, { data: inv }] = await Promise.all([
       supabase.from('wa_clients').select('id,name').eq('org_id', org.id).order('name'),
-      supabase.from('wa_invites').select('*').eq('org_id', org.id).is('accepted_at', null).is('revoked_at', null).order('created_at', { ascending: false }),
+      supabase.from('wa_invites').select('*').eq('org_id', org.id).order('created_at', { ascending: false }).limit(60),
     ])
     setClients(cs || []); setInvites(inv || [])
     if (isOrgAdmin) {
@@ -54,18 +54,18 @@ export default function Team() {
     load()
   }
 
-  // after creating / renewing: show the link, and email it too if Resend is configured (send-invite function)
-  const showLink = async (inv, email) => {
-    setLink({ email, token: inv.token, emailed: null })
-    try {
-      const r = await callFunction('send-invite', { invite_id: inv.id, token: inv.token })
-      setLink((l) => (l && l.token === inv.token ? { ...l, emailed: r.sent ? 'sent' : 'off' } : l))
-    } catch { setLink((l) => (l && l.token === inv.token ? { ...l, emailed: 'off' } : l)) }
+  // after creating / renewing: deliver it (send-invite function) and always show the link as a fallback
+  const showLink = async (inv, email, existing) => {
+    setLink({ email, token: inv.token, existing, result: null })
+    let result
+    try { result = await callFunction('send-invite', { invite_id: inv.id, token: inv.token }) } catch (e) { result = { sent: false, missing: true, reason: e.message } }
+    setLink((l) => (l && l.token === inv.token ? { ...l, result } : l))
+    load()
   }
   const renew = async (inv) => {
     const { data, error } = await supabase.rpc('wa_renew_invite', { p_invite: inv.id, p_days: 7 })
     if (error) return setToast(errMsg(error))
-    load(); showLink(data, inv.email)
+    load(); showLink(data, inv.email, inv.target_existed)
   }
 
   const saveOrgName = async () => {
@@ -87,7 +87,8 @@ export default function Team() {
   if (!org) return <Spinner />
 
   const limits = org.limits || {}
-  const pending = invites || []
+  const list = invites || []
+  const pendingCount = list.filter((i) => inviteStatus(i).key.startsWith('pending')).length
 
   return (
     <div className="page">
@@ -152,25 +153,27 @@ export default function Team() {
         )}
 
         <div className="card flush">
-          <div className="pane-head"><span className="section-label">{isOrgAdmin ? 'Inviti in sospeso' : 'I tuoi inviti in sospeso'}{pending.length ? ` (${pending.length})` : ''}</span></div>
-          {invites === null ? <Spinner /> : pending.length === 0 ? (
-            <EmptyState icon="people" title="Nessun invito in sospeso">Gli inviti non ancora accettati compaiono qui, con la scadenza del link.</EmptyState>
+          <div className="pane-head"><span className="section-label">{isOrgAdmin ? 'Inviti' : 'I tuoi inviti'}{pendingCount ? ` (${pendingCount} in sospeso)` : ''}</span></div>
+          {invites === null ? <Spinner /> : list.length === 0 ? (
+            <EmptyState icon="people" title="Nessun invito">Gli inviti che crei compaiono qui con il loro stato: inviato, in attesa, accettato, rifiutato, scaduto o revocato.</EmptyState>
           ) : (
             <table className="table">
-              <thead><tr><th>Email</th><th>Ruolo</th><th>Clienti</th><th>Scade</th><th></th></tr></thead>
+              <thead><tr><th>Email</th><th>Ruolo</th><th>Clienti</th><th>Stato</th><th>Scadenza</th><th></th></tr></thead>
               <tbody>
-                {pending.map((i) => {
-                  const expired = new Date(i.expires_at) <= new Date()
+                {list.map((i) => {
+                  const st = inviteStatus(i)
+                  const open = st.key.startsWith('pending')
                   return (
-                    <tr key={i.id}>
+                    <tr key={i.id} style={{ opacity: open ? 1 : 0.65 }}>
                       <td style={{ fontWeight: 600, color: 'var(--heading)' }}>{i.email}</td>
                       <td>{ROLE_LABEL[i.role]}</td>
                       <td className="small secondary">{i.role === 'admin' ? 'Tutti' : (i.client_ids || []).map((id) => clientName[id]).filter(Boolean).join(', ') || '–'}</td>
-                      <td>{expired ? <span className="badge red">Scaduto</span> : <span className="mono">{fmtDateTime(i.expires_at)}</span>}</td>
+                      <td><span className={`badge ${st.cls}`} title={st.hint}>{st.label}</span>{i.email_error && open ? <div className="small muted" style={{ marginTop: 4 }}>Email: {i.email_error}</div> : null}</td>
+                      <td className="mono">{fmtDateTime(i.expires_at)}</td>
                       <td>
                         <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
-                          <button className="btn sm" onClick={() => renew(i)}>Nuovo link</button>
-                          <button className="btn sm danger" onClick={() => rpc('wa_revoke_invite', { p_invite: i.id }, 'Invito revocato')}>Revoca</button>
+                          {(open || st.key === 'expired') && <button className="btn sm" onClick={() => renew(i)}>{st.key === 'expired' ? 'Rinnova' : 'Nuovo link'}</button>}
+                          {open && <button className="btn sm danger" onClick={() => rpc('wa_revoke_invite', { p_invite: i.id }, 'Invito revocato')}>Revoca</button>}
                         </div>
                       </td>
                     </tr>
@@ -207,12 +210,26 @@ export default function Team() {
       </div>
 
       <InviteModal open={inviteOpen} onClose={() => setInviteOpen(false)} org={org} isOrgAdmin={isOrgAdmin} clients={clients} setToast={setToast}
-        onCreated={(inv, email) => { setInviteOpen(false); load(); showLink(inv, email) }} />
+        onCreated={(inv, email) => { setInviteOpen(false); load(); showLink(inv, email, inv.target_existed) }} />
       <AssignModal member={editAssign} onClose={() => setEditAssign(null)} clients={clients} current={editAssign ? assignedTo(editAssign.user_id) : []}
         onSave={async (ids) => { await rpc('wa_set_client_assignments', { p_org: org.id, p_user: editAssign.user_id, p_client_ids: ids }, 'Clienti aggiornati'); setEditAssign(null) }} />
       <LinkModal link={link} onClose={() => setLink(null)} setToast={setToast} />
     </div>
   )
+}
+
+/**
+ * Invite status for the Team page. "pending" splits by path: account to create (email sent by Supabase → joins by
+ * itself) vs existing account (waits for Accept in the app).
+ */
+function inviteStatus(i) {
+  if (i.accepted_at) return { key: 'accepted', label: 'Accettato', cls: 'green' }
+  if (i.declined_at) return { key: 'declined', label: 'Rifiutato', cls: 'muted' }
+  if (i.revoked_at) return { key: 'revoked', label: 'Revocato', cls: 'muted' }
+  if (new Date(i.expires_at) <= new Date()) return { key: 'expired', label: 'Scaduto', cls: 'red' }
+  if (i.target_existed) return { key: 'pending-accept', label: 'In attesa di accettazione', cls: 'yellow', hint: 'Ha già un account: vede l’invito nell’app e deve accettarlo' }
+  if (i.email_sent_at) return { key: 'pending-sent', label: 'Inviato', cls: 'yellow', hint: 'Email d’invito inviata: entra da sola quando conferma l’account' }
+  return { key: 'pending-link', label: 'Da consegnare', cls: 'yellow', hint: 'Email non partita: manda il link a mano' }
 }
 
 function ClientChecklist({ clients, value, onChange }) {
@@ -233,7 +250,12 @@ function ClientChecklist({ clients, value, onChange }) {
 function InviteModal({ open, onClose, org, isOrgAdmin, clients, onCreated, setToast }) {
   const [f, setF] = useState({ email: '', role: 'collaborator', clients: [], days: 7 })
   const [busy, setBusy] = useState(false)
-  useEffect(() => { if (open) setF({ email: '', role: 'collaborator', clients: [], days: 7 }) }, [open])
+  const [mail, setMail] = useState(null) // { resend: boolean } | { missing: true }
+  useEffect(() => {
+    if (!open) return
+    setF({ email: '', role: 'collaborator', clients: [], days: 7 })
+    callFunction('send-invite', { mode: 'status' }).then(setMail, () => setMail({ missing: true }))
+  }, [open])
   const submit = async (e) => {
     e.preventDefault()
     if (f.role === 'collaborator' && !f.clients.length) return setToast('Scegli almeno un cliente')
@@ -269,9 +291,19 @@ function InviteModal({ open, onClose, org, isOrgAdmin, clients, onCreated, setTo
           <select id="inv-days" className="select" style={{ maxWidth: 200 }} value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })}>
             <option value={1}>1 giorno</option><option value={3}>3 giorni</option><option value={7}>7 giorni</option><option value={14}>14 giorni</option><option value={30}>30 giorni</option>
           </select></div>
+        <div className={`callout ${mail?.missing ? 'warn' : ''}`} style={{ marginBottom: 16 }}>
+          {mail === null ? 'Controllo del servizio email…'
+            : mail.missing ? 'La funzione send-invite non è pubblicata: nessuna email partirà. Dopo la creazione copia il link e mandalo tu.'
+            : <>
+                <b style={{ color: 'var(--heading)' }}>Come arriva l’invito.</b> Se la persona non ha un account riceve l’email d’invito di Supabase e, confermato l’indirizzo, entra da sola.
+                Se ha già un account vede l’invito appena accede e deve accettarlo.{' '}
+                {mail.resend ? 'Riceve anche un’email (Resend).' : <b style={{ color: 'var(--yellow)' }}>Resend non è configurato: chi ha già un account non riceve email, solo la notifica nell’app.</b>}
+                {' '}In ogni caso avrai anche il link da copiare.
+              </>}
+        </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Annulla</button>
-          <button className="btn primary" disabled={busy}>{busy ? 'Creazione…' : 'Crea invito'}</button>
+          <button className="btn primary" disabled={busy}>{busy ? 'Creazione…' : 'Invia invito'}</button>
         </div>
       </form>
     </Modal>
@@ -293,18 +325,28 @@ function AssignModal({ member, onClose, clients, current, onSave }) {
   )
 }
 
+function deliveryText(link) {
+  const r = link.result
+  if (!r) return { cls: '', text: 'Invio in corso…' }
+  if (r.missing) return { cls: 'warn', text: 'Funzione send-invite non pubblicata: nessuna email inviata. Manda tu il link qui sotto.' }
+  if (r.sent && r.channel === 'supabase') return { cls: 'ok', text: `Email d’invito inviata da Supabase. Quando ${link.email} crea l’account e conferma l’indirizzo, entra da solo nell’organizzazione.` }
+  if (r.sent) return { cls: 'ok', text: `Email inviata (Resend).${r.in_app ? ' Vedrà l’invito anche nell’app, con Accetta e Rifiuta.' : ''}` }
+  if (r.in_app) return { cls: 'warn', text: `${link.email} ha già un account: vedrà l’invito appena accede (Inviti ricevuti) e dovrà accettarlo. Nessuna email inviata: Resend non è configurato. Se vuoi, mandagli il link.` }
+  return { cls: 'warn', text: `Email non inviata${r.reason ? ` (${r.reason})` : ''}. Manda tu il link qui sotto.` }
+}
+
 function LinkModal({ link, onClose, setToast }) {
   if (!link) return null
   const url = inviteLink(link.token)
+  const d = deliveryText(link)
   const copy = async () => { try { await navigator.clipboard.writeText(url); setToast('Link copiato') } catch { setToast('Copia non riuscita: seleziona il link e copialo') } }
   return (
-    <Modal open title="Invito pronto" onClose={onClose}>
-      <p className="secondary" style={{ marginTop: 0 }}>Manda questo link a <b style={{ color: 'var(--heading)' }}>{link.email}</b>. Vale una sola volta e solo per quell’indirizzo.</p>
+    <Modal open title="Invito creato" onClose={onClose}>
+      <div className={`callout ${d.cls}`} aria-live="polite" style={{ marginBottom: 16 }}>{d.text}</div>
+      <span className="label">Link d’invito (alternativa)</span>
       <div className="code" style={{ userSelect: 'all' }}>{url}</div>
       <div className="row between wrap" style={{ marginTop: 14 }}>
-        <span className="small secondary" aria-live="polite">
-          {link.emailed === null ? 'Invio email…' : link.emailed === 'sent' ? 'Email inviata.' : 'Email non inviata (servizio email non configurato): copia il link.'}
-        </span>
+        <span className="small secondary">Vale una sola volta, solo per {link.email} e solo con l’email confermata.</span>
         <button className="btn primary" onClick={copy}>Copia link</button>
       </div>
     </Modal>

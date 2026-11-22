@@ -81,7 +81,7 @@ export default function Login() {
           {(err || denied) && <div className="callout danger" role="alert" style={{ marginBottom: 16 }}>{err || 'Questo account non ha accesso al pannello.'}</div>}
           <button className="btn primary" disabled={busy} style={{ width: '100%', padding: '13px 16px', fontSize: 15 }}>{busy ? 'Accesso in corso…' : 'Accedi'}</button>
           <p className="hint" style={{ marginTop: 18 }}>
-            {signup ? <>Non hai un account? <Link to="/signup">Creane uno</Link></> : 'Si entra solo su invito: se l’hai ricevuto, apri il link dell’email.'}
+            {signup ? <>Non hai un account? <Link to="/signup">Registrati</Link></> : 'Accesso su invito: se l’hai ricevuto, segui il link dell’email.'}
           </p>
         </form>
       </section>
