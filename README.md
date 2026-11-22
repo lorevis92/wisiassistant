@@ -82,11 +82,13 @@ wisiassistant/
 3. Deploy. Il widget è servito su `https://<dominio>/widget.js`.
    Ricorda: dopo aver aggiunto env var su Vercel serve un redeploy.
 
-### 4. Marchio e design
-Il logotipo (nuraghe stilizzato con la luce corallo + scritta "Sardesk") è in `src/components/Brand.jsx`, la favicon in
-`public/favicon.svg`. Colori, tipografia, raggi, ombre e spaziature sono design token in un solo file:
-`src/styles/tokens.css` (tema chiaro e scuro). Il tema del pannello (chiaro / scuro / automatico) si sceglie in alto a destra
-e viene ricordato. Il widget ha un suo tema in Impostazioni → Aspetto (automatico = segue il sito che lo ospita).
+### 4. Marchio e design ("Cala Elettrica")
+Il logotipo (nuraghe stilizzato nel gradiente turchese-viola, con la luce corallo + scritta "Sardesk") è in
+`src/components/Brand.jsx`, la favicon in `public/favicon.svg`. Colori, gradienti, bagliori, tipografia (Unbounded, Geist),
+raggi, ombre e spaziature sono design token in un solo file: `src/styles/tokens.css`. Il tema scuro è quello principale;
+il selettore chiaro / scuro / automatico è nella barra laterale (in alto su telefono) e la scelta viene ricordata.
+Il widget ha un suo tema in Impostazioni → Aspetto (automatico = segue il sito che lo ospita); il colore predefinito
+`#22E6D6` viene disegnato come gradiente turchese-viola, un colore scelto per il cliente viene usato così com'è.
 
 ## Uso
 

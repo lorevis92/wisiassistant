@@ -214,7 +214,7 @@ function LivePreview({ client, widget }) {
   // the frame imitates the client's site: light or dark page behind the widget
   const frame = {
     position: 'relative', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--border)',
-    background: site === 'dark' ? 'linear-gradient(180deg,#1b2a33,#101b22)' : 'linear-gradient(180deg,#f7f8f6,#e9ece7)',
+    background: site === 'dark' ? 'radial-gradient(120% 90% at 80% 0%, rgba(139,108,255,.18), transparent 60%), #07090E' : 'radial-gradient(120% 90% at 80% 0%, rgba(34,230,214,.14), transparent 60%), #F4F5F9',
   }
   return (
     <div className="col" style={{ gap: 10, position: 'sticky', top: 80 }}>

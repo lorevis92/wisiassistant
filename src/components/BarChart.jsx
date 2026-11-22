@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 const niceStep = (max) => {
   if (max <= 4) return 1
@@ -23,6 +23,7 @@ export default function BarChart({ data, height = 200, unit = 'conversazioni', a
   const wrap = useRef(null)
   const [hover, setHover] = useState(null)
   const [W, setW] = useState(640)
+  const gid = `sd-bar-${useId().replace(/:/g, '')}`
   // draw in real pixels: text and bars keep their size at any width
   useEffect(() => {
     const el = wrap.current
@@ -49,6 +50,12 @@ export default function BarChart({ data, height = 200, unit = 'conversazioni', a
   return (
     <div className="chart" ref={wrap} onMouseLeave={() => setHover(null)}>
       <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel || `${total} ${unit} in ${data.length} giorni`}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0" stopColor="var(--chartFrom)" />
+            <stop offset="1" stopColor="var(--chartTo)" />
+          </linearGradient>
+        </defs>
         {ticks.map((t) => (
           <g key={t}>
             <line className="grid" x1={padL} x2={W} y1={y(t)} y2={y(t)} />
@@ -59,7 +66,7 @@ export default function BarChart({ data, height = 200, unit = 'conversazioni', a
           const x = padL + slot * i + (slot - bw) / 2
           return (
             <g key={d.key}>
-              <path className={`bar${hover != null && hover !== i ? ' dim' : ''}`} d={column(x, y(d.value), bw, y(0) - y(d.value))} />
+              <path fill={`url(#${gid})`} className={`bar${hover != null && hover !== i ? ' dim' : hover === i ? ' on' : ''}`} d={column(x, y(d.value), bw, y(0) - y(d.value))} />
               {/* hit target: the whole slot, taller than the mark */}
               <rect x={padL + slot * i} y={padT} width={slot} height={H - padT - padB} fill="transparent"
                 tabIndex={0} aria-label={`${d.label}: ${d.value} ${unit}`}

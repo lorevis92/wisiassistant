@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#F2F3EF" />
+    <meta name="theme-color" content="#05070B" />
     <meta name="description" content="Sardesk: l'assistente AI che risponde ai clienti con i contenuti del tuo sito." />
     <title>Sardesk</title>
     <script>
       // apply the remembered theme before the first paint (see src/lib/theme.js)
       (function () {
-        var p = 'auto'
-        try { p = localStorage.getItem('sardesk-theme') || 'auto' } catch (e) {}
+        var p = 'dark' // dark-first: the default when nothing was chosen
+        try { p = localStorage.getItem('sardesk-theme') || 'dark' } catch (e) {}
         var dark = p === 'dark' || (p !== 'light' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
         document.documentElement.setAttribute('data-theme-pref', p)
@@ -19,7 +19,7 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600;700&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>

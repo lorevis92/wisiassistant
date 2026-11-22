@@ -12,7 +12,8 @@ export const THEMES = ['light', 'dark', 'auto']
 const mq = () => (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null)
 
 export function getThemePref() {
-  try { const v = localStorage.getItem(THEME_KEY); return THEMES.includes(v) ? v : 'auto' } catch { return 'auto' }
+  // dark-first: dark is the default until the user picks something else
+  try { const v = localStorage.getItem(THEME_KEY); return THEMES.includes(v) ? v : 'dark' } catch { return 'dark' }
 }
 
 export function resolveTheme(pref) {
@@ -25,7 +26,7 @@ export function applyTheme(pref) {
   root.dataset.theme = theme
   root.dataset.themePref = pref
   const meta = document.querySelector('meta[name="theme-color"]')
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0A1922' : '#F2F3EF')
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#05070B' : '#F6F7FB')
   window.dispatchEvent(new CustomEvent('sardesk-theme', { detail: { pref, theme } }))
 }
 

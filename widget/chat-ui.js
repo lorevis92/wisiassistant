@@ -9,13 +9,13 @@
  *               disclaimer, lead_capture, theme }  (see widget/avatars.js for the avatar fallbacks)
  * theme: 'light' | 'dark' | 'auto' (default): auto follows the hosting site (hostIsDark), live.
  */
-import { avatarMarkup, resolveAvatar, resolveHeaderAvatar, safeColor } from './avatars.js'
+import { DEFAULT_COLOR, avatarMarkup, resolveAvatar, resolveHeaderAvatar, safeColor } from './avatars.js'
 
 export const DEFAULT_DISCLAIMER = 'Le informazioni potrebbero non essere del tutto accurate. Per questioni importanti contatta direttamente la struttura.'
 export const DEFAULT_WIDGET = {
   title: 'Assistente',
   welcome: 'Ciao! Come posso aiutarti?',
-  color: '#0F5A7F',
+  color: DEFAULT_COLOR, // the default colour is painted as the Sardesk teal → violet gradient
   position: 'right',
   suggestions: [],
   teaser_text: 'Ciao! Hai bisogno di aiuto?',
@@ -108,7 +108,7 @@ function ensureFont() {
   if (document.getElementById('wa-brand-font')) return
   const l = document.createElement('link')
   l.id = 'wa-brand-font'; l.rel = 'stylesheet'
-  l.href = 'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap'
+  l.href = 'https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap'
   document.head.appendChild(l)
 }
 
@@ -126,19 +126,24 @@ function styles(w, mode) {
   const side = w.position === 'left' ? 'left' : 'right'
   const other = side === 'left' ? 'right' : 'left'
   const L = luminance(w.color)
-  const on = L > 0.5 ? '#10232F' : '#ffffff'
-  // links inside assistant bubbles: the client colour when it reads on that bubble, else the ink
-  const linkLight = L < 0.4 ? w.color : '#10232F'
-  const linkDark = L > 0.18 ? w.color : '#8FD0E2'
+  const brand = w.color.toUpperCase() === DEFAULT_COLOR
+  const on = L > 0.45 ? '#04070C' : '#ffffff'
+  // filled surfaces (user bubble, send, launcher): the brand gradient by default, otherwise the client's colour
+  const fillBg = brand ? 'linear-gradient(115deg,#22E6D6 0%,#5FA8F2 50%,#8B6CFF 100%)' : w.color
+  // links inside assistant bubbles: the client colour when it reads on that bubble, else a readable accent
+  const linkLight = brand ? '#0A8E86' : L < 0.4 ? w.color : '#141824'
+  const linkDark = brand ? '#5CF2E5' : L > 0.18 ? w.color : '#8FD0E2'
   return `
 :host{all:initial;${mode === 'widget' ? '' : 'display:block;height:100%;'}}
-.wa{--c:${w.color};--on:${on};--pos:${mode === 'widget' ? 'fixed' : 'absolute'};
-  --bg:#ffffff;--ink:#10232F;--ink2:#4C5A61;--muted:#7A858A;--soft:#F0F2EE;--line:#E0E3DC;--hover:#F0F2EE;--field:#ffffff;--ring:#ffffff;
-  --link:${linkLight};--shadow:0 18px 50px -12px rgba(10,30,45,.30),0 4px 14px -4px rgba(10,30,45,.12);--pop:0 10px 30px -6px rgba(10,30,45,.22),0 0 0 1px rgba(10,30,45,.05);
-  font-family:'Instrument Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.5;color:var(--ink);
+.wa{--c:${w.color};--cg:${fillBg};--on:${on};--pos:${mode === 'widget' ? 'fixed' : 'absolute'};
+  --bg:#ffffff;--ink:#141824;--ink2:#4A5266;--muted:#646C80;--soft:#F2F3F8;--line:rgba(20,24,60,.10);--hover:#F2F3F8;--field:#ffffff;--ring:#ffffff;
+  --link:${linkLight};--shadow:0 24px 60px -18px rgba(15,20,50,.35),0 4px 14px -4px rgba(15,20,50,.12);--pop:0 12px 32px -8px rgba(15,20,50,.25),0 0 0 1px rgba(15,20,50,.06);
+  --halo:0 10px 30px -8px color-mix(in srgb,var(--c) 70%,transparent);
+  font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.5;color:var(--ink);
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-align:left;color-scheme:light;${mode === 'widget' ? '' : 'position:relative;height:100%;'}}
-.wa.dark{--bg:#0F2230;--ink:#E5ECEE;--ink2:#A2B2B8;--muted:#7F939B;--soft:#17323F;--line:#213D4C;--hover:#17323F;--field:#0C1D29;--ring:#15303F;
-  --link:${linkDark};--shadow:0 22px 60px -14px rgba(0,0,0,.7),0 4px 16px -4px rgba(0,0,0,.5);--pop:0 12px 34px -8px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);color-scheme:dark}
+.wa.dark{--bg:#0B0F17;--ink:#E6EAF2;--ink2:#A3AEC2;--muted:#7D889D;--soft:#151B27;--line:rgba(160,190,255,.12);--hover:#151B27;--field:#080B12;--ring:#10151F;
+  --link:${linkDark};--shadow:0 30px 70px -20px rgba(0,0,0,.85),0 0 40px -16px ${brand ? 'rgba(139,108,255,.55)' : 'color-mix(in srgb,var(--c) 45%,transparent)'};
+  --pop:0 14px 36px -10px rgba(0,0,0,.8),0 0 0 1px rgba(160,190,255,.12);color-scheme:dark}
 :where(.wa) *,:where(.wa) *::before,:where(.wa) *::after{box-sizing:border-box;font-family:inherit;letter-spacing:normal}
 :where(.wa) button{font:inherit;color:inherit;background:none;border:0;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .wa button:focus-visible,.wa input:focus-visible{outline:2px solid var(--c);outline-offset:2px}
@@ -146,11 +151,11 @@ function styles(w, mode) {
 
 /* launcher */
 .launcher{position:var(--pos);bottom:20px;${side}:20px;width:60px;height:60px;border-radius:50%;border:3px solid var(--ring);background:var(--ring);overflow:hidden;
-  box-shadow:0 8px 24px -4px rgba(10,30,45,.32),0 2px 4px rgba(10,30,45,.12);z-index:2147483000;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s}
-.launcher:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 12px 30px -6px rgba(10,30,45,.36),0 2px 4px rgba(10,30,45,.12)}
+  box-shadow:var(--halo),0 2px 6px rgba(0,0,0,.18);z-index:2147483000;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s}
+.launcher:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 14px 36px -8px color-mix(in srgb,var(--c) 85%,transparent),0 2px 6px rgba(0,0,0,.18)}
 .launcher:active{transform:scale(.97)}
 .l-face,.l-close{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .2s ease,transform .3s cubic-bezier(.2,.7,.2,1)}
-.l-close{background:var(--c);color:var(--on);opacity:0;transform:rotate(-90deg)}
+.l-close{background:var(--cg);color:var(--on);opacity:0;transform:rotate(-90deg)}
 .is-open .l-close{opacity:1;transform:none}
 .is-open .l-face{opacity:0;transform:scale(.8)}
 .l-face svg,.avatar svg,.avatar-img{width:100%;height:100%;display:block;object-fit:cover}
@@ -179,7 +184,7 @@ function styles(w, mode) {
 .mode-preview .panel{height:calc(100% - 112px);max-height:640px}
 
 .head{display:flex;align-items:center;gap:11px;padding:12px 10px 12px 14px;border-bottom:1px solid var(--line);background:var(--bg);flex:none;position:relative}
-.head::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--c)}
+.head::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;background:var(--cg);opacity:.7}
 .head .avatar{width:36px;height:36px;border-radius:50%;overflow:hidden;flex:none;background:var(--soft)}
 .head .name{flex:1;min-width:0;font-weight:600;font-size:15.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .icon{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--ink2);flex:none;transition:background .15s,color .15s}
@@ -191,7 +196,7 @@ function styles(w, mode) {
 .menu button:disabled{color:var(--muted);cursor:default}
 .menu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
 .menu .mlabel{font-size:12px;color:var(--muted);padding:4px 12px 2px}
-.menu button[aria-checked="true"]::after{content:'';width:7px;height:7px;border-radius:50%;background:var(--c)}
+.menu button[aria-checked="true"]::after{content:'';width:7px;height:7px;border-radius:50%;background:var(--cg)}
 .dark .menu button[aria-checked="true"]::after{background:var(--link)}
 
 .body{flex:1;overflow-y:auto;padding:18px 14px 8px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
@@ -201,7 +206,7 @@ function styles(w, mode) {
 .who{font-size:11.5px;font-weight:500;color:var(--muted);margin:0 6px 3px}
 .bubble{padding:9px 14px;border-radius:18px;font-size:14.5px;line-height:1.5;overflow-wrap:anywhere;word-break:normal}
 .row.bot .bubble{background:var(--soft);color:var(--ink);border-bottom-left-radius:6px}
-.row.user .bubble{background:var(--c);color:var(--on);border-bottom-right-radius:6px}
+.row.user .bubble{background:var(--cg);color:var(--on);border-bottom-right-radius:6px;box-shadow:0 6px 18px -10px color-mix(in srgb,var(--c) 80%,transparent)}
 .bubble a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .row.bot .bubble a{color:var(--link)}
 .bubble strong{font-weight:600}
@@ -211,7 +216,7 @@ function styles(w, mode) {
 @media (hover:none){.fb{opacity:.65}}
 .fb button{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .fb button:hover{background:var(--hover);color:var(--ink)}
-.fb button.on{color:var(--c)}
+.fb button.on{color:var(--link)}
 .dark .fb button.on{color:var(--link)}
 .sug{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
 .sug button{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-size:13.5px;line-height:1.35;color:var(--ink);text-align:left;transition:border-color .15s,background .15s}
@@ -225,7 +230,7 @@ function styles(w, mode) {
 .lead label{font-size:12.5px;font-weight:500;color:var(--ink2);margin-top:2px}
 .lead input{width:100%;border:1px solid var(--line);border-radius:999px;padding:9px 14px;font:inherit;font-size:14px;color:var(--ink);background:var(--field);outline:0;transition:border-color .15s}
 .lead input:focus{border-color:var(--c)}
-.lead .primary{margin-top:6px;background:var(--c);color:var(--on);border-radius:999px;padding:10px 14px;font-weight:600;font-size:14px}
+.lead .primary{margin-top:6px;background:var(--cg);color:var(--on);border-radius:999px;padding:10px 14px;font-weight:600;font-size:14px}
 
 .composer{padding:8px 12px 4px;flex:none}
 .pill{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 5px 5px 16px;background:var(--field);transition:border-color .15s,box-shadow .15s}
@@ -235,7 +240,7 @@ function styles(w, mode) {
 .pill input:disabled{cursor:not-allowed}
 .mic-slot{width:34px;height:34px;flex:none}
 .send{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--soft);color:var(--muted);transition:background .15s,color .15s,transform .15s}
-.send:not(:disabled){background:var(--c);color:var(--on)}
+.send:not(:disabled){background:var(--cg);color:var(--on);box-shadow:0 0 16px -4px color-mix(in srgb,var(--c) 70%,transparent)}
 .send:not(:disabled):active{transform:scale(.94)}
 .send:disabled{cursor:default}
 .disclaimer{font-size:11px;line-height:1.4;color:var(--muted);text-align:center;padding:4px 20px 11px;flex:none}

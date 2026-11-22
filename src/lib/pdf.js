@@ -47,8 +47,8 @@ export async function exportConversationsPdf({ clientName, from, to, conversatio
       const bh = lines.length * 12 + 22
       ensure(bh + 6)
       const x = isUser ? W - M - bw : M
-      // Sardesk palette: mare (user), corallo outline (operator), granito (assistant)
-      if (isUser) { doc.setFillColor(15, 90, 127); doc.setTextColor(255) } else if (m.role === 'human') { doc.setFillColor(255, 255, 255); doc.setDrawColor(217, 71, 47); doc.setTextColor(16, 35, 47) } else { doc.setFillColor(242, 243, 239); doc.setDrawColor(224, 227, 220); doc.setTextColor(16, 35, 47) }
+      // Sardesk palette: violet (user), coral outline (operator), paper grey (assistant)
+      if (isUser) { doc.setFillColor(107, 69, 240); doc.setTextColor(255) } else if (m.role === 'human') { doc.setFillColor(255, 255, 255); doc.setDrawColor(224, 56, 74); doc.setTextColor(20, 24, 36) } else { doc.setFillColor(242, 243, 248); doc.setDrawColor(222, 224, 234); doc.setTextColor(20, 24, 36) }
       doc.roundedRect(x, y, bw, bh, 5, 5, isUser ? 'F' : 'FD')
       doc.text(lines, x + 8, y + 14)
       doc.setFontSize(7); doc.setTextColor(isUser ? 255 : 170)

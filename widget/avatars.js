@@ -15,7 +15,9 @@ export const AVATAR_PRESETS = [
   { id: 'bot', label: 'Robot' },
 ]
 
-export const DEFAULT_AVATAR = { kind: 'preset', preset: 'person', bg: '#0F5A7F', fg: '#FFFFFF', url: '' }
+// default: the Sardesk teal → violet gradient behind a near-black figure (see presetSvg)
+export const DEFAULT_AVATAR = { kind: 'preset', preset: 'person', bg: '#22E6D6', fg: '#04070C', url: '' }
+export const DEFAULT_COLOR = '#22E6D6'
 
 /** Only plain hex colors reach CSS / SVG: anything else falls back (no injection through config values). */
 export function safeColor(c, fallback) {
@@ -65,7 +67,12 @@ const FIGURES = {
 
 export function presetSvg(preset, bg, fg) {
   const fig = (FIGURES[preset] || FIGURES.person)(fg, bg)
-  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><rect width="64" height="64" fill="${bg}"/>${fig}</svg>`
+  // the default teal background is painted as the brand gradient (teal → violet)
+  const grad = String(bg).toUpperCase() === DEFAULT_COLOR
+  const id = grad ? `sdg${Math.random().toString(36).slice(2, 8)}` : ''
+  const fill = grad ? `url(#${id})` : bg
+  const defs = grad ? `<defs><linearGradient id="${id}" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#22E6D6"/><stop offset=".55" stop-color="#5FA8F2"/><stop offset="1" stop-color="#8B6CFF"/></linearGradient></defs>` : ''
+  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">${defs}<rect width="64" height="64" fill="${fill}"/>${fig}</svg>`
 }
 
 /** Markup for an avatar container (the container clips it to a circle). */

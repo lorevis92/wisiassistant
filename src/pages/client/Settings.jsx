@@ -24,7 +24,7 @@ export default function Settings({ client, reload }) {
     channels: client.channels || ['web', 'standalone'],
     allowed_domains: (client.allowed_domains || []).join('\n'),
     widget: {
-      color: '#0F5A7F', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'],
+      color: '#22E6D6', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'],
       teaser_text: 'Ciao! Hai bisogno di aiuto?', teaser_delay: 0, disclaimer: DEFAULT_DISCLAIMER, human_handoff: false,
       ...(client.widget || {}),
       avatar: resolveAvatar(client.widget),

@@ -1,14 +1,26 @@
+import { useId } from 'react'
 import { useTheme } from '../lib/theme'
 import { BRAND } from '../lib/brand'
 
 /**
- * Sardesk symbol: a stylised nuraghe (three courses of stone, a doorway) with a coral light on top,
- * the watchtower that guides. Tower in currentColor, light in the accent token.
+ * Sardesk symbol: a stylised nuraghe (three courses of stone, a doorway) in the teal → violet gradient, with the coral
+ * light on top: the watchtower that guides. The glow comes from CSS (.brand .mark). `flat` paints it in currentColor.
  */
-export function Mark({ size = 28, light = 'var(--accent)', className = 'mark' }) {
+export function Mark({ size = 28, light = 'var(--coral)', className = 'mark', flat = false }) {
+  const id = `sd-g-${useId().replace(/:/g, '')}`
+  const fill = flat ? 'currentColor' : `url(#${id})`
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <g fill="currentColor">
+      {!flat && (
+        <defs>
+          <linearGradient id={id} x1="6" y1="27" x2="26" y2="8" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#22E6D6" />
+            <stop offset="0.5" stopColor="#5FA8F2" />
+            <stop offset="1" stopColor="#8B6CFF" />
+          </linearGradient>
+        </defs>
+      )}
+      <g fill={fill}>
         <path fillRule="evenodd" d="M6.4 27 8 21h16l1.6 6Zm8.1 0v-2.6a1.5 1.5 0 0 1 3 0V27Z" />
         <path d="M8.4 19.4 9.7 14.4h12.6l1.3 5Z" />
         <path d="M10.1 12.8 11 9.2h10l.9 3.6Z" />

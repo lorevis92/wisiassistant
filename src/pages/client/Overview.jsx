@@ -72,7 +72,7 @@ export default function Overview({ client }) {
         <Stat k="Lead raccolti" v={s?.leads ?? '–'} s={`${s?.open_escalations ?? 0} conversazioni in attesa`} />
       </div>
 
-      <div className="card">
+      <div className="card glow">
         <div className="row between wrap" style={{ marginBottom: 14, alignItems: 'baseline' }}>
           <div className="card-title" style={{ margin: 0 }}>Conversazioni al giorno</div>
           <span className="small muted">Ultimi {DAYS} giorni</span>
@@ -96,7 +96,7 @@ export default function Overview({ client }) {
                     <span className="small secondary num">{n}</span>
                   </div>
                   <div style={{ height: 4, borderRadius: 4, background: 'var(--surfaceAlt)', marginTop: 5 }}>
-                    <div style={{ height: '100%', width: `${(n / maxTop) * 100}%`, borderRadius: 4, background: 'var(--chart)' }} />
+                    <div style={{ height: '100%', width: `${(n / maxTop) * 100}%`, borderRadius: 4, background: 'var(--grad)', boxShadow: '0 0 10px rgba(34,230,214,.35)' }} />
                   </div>
                 </li>
               ))}
