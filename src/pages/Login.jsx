@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { BRAND } from '../lib/brand'
@@ -27,7 +27,8 @@ function WeaveBand() {
 }
 
 export default function Login() {
-  const [email, setEmail] = useState('')
+  const loc = useLocation()
+  const [email, setEmail] = useState(loc.state?.email || '')
   const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -44,7 +45,7 @@ export default function Login() {
     setBusy(true); setErr('')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setBusy(false)
-    if (error) return setErr(error.message === 'Invalid login credentials' ? 'Email o password non corrette.' : error.message)
+    if (error) return setErr(/invalid login credentials/i.test(error.message) ? 'Email o password non corrette.' : /email not confirmed/i.test(error.message) ? 'Questa email non è ancora confermata: apri il link che ti abbiamo mandato.' : error.message)
   }
 
   return (
@@ -77,8 +78,14 @@ export default function Login() {
           <div className="field">
             <label className="label" htmlFor="login-password">Password</label>
             <input id="login-password" className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            {!err && <div className="hint" style={{ textAlign: 'right' }}><Link to={`/reset${email ? `?email=${encodeURIComponent(email)}` : ''}`}>Password dimenticata?</Link></div>}
           </div>
-          {(err || denied) && <div className="callout danger" role="alert" style={{ marginBottom: 16 }}>{err || 'Questo account non ha accesso al pannello.'}</div>}
+          {(err || denied) && (
+            <div className="callout danger" role="alert" style={{ marginBottom: 16 }}>
+              {err || 'Questo account non ha accesso al pannello.'}
+              {err && <div style={{ marginTop: 8 }}><Link to={`/reset${email ? `?email=${encodeURIComponent(email)}` : ''}`}>Password dimenticata?</Link></div>}
+            </div>
+          )}
           <button className="btn primary" disabled={busy} style={{ width: '100%', padding: '13px 16px', fontSize: 15 }}>{busy ? 'Accesso in corso…' : 'Accedi'}</button>
           <p className="hint" style={{ marginTop: 18 }}>
             {signup ? <>Non hai un account? <Link to="/signup">Registrati</Link></> : 'Accesso su invito: se l’hai ricevuto, segui il link dell’email.'}

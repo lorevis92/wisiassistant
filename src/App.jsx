@@ -10,6 +10,7 @@ import Signup from './pages/Signup'
 import NoAccess from './pages/NoAccess'
 import Invites from './pages/Invites'
 import Welcome from './pages/Welcome'
+import ResetPassword from './pages/ResetPassword'
 import Standalone from './pages/Standalone'
 
 function Protected({ children }) {
@@ -31,6 +32,8 @@ export default function App() {
       <Route path="/signup" element={<Signup />} />
       {/* landing of the Supabase invitation email: choose a password (joining is automatic) */}
       <Route path="/welcome" element={<Welcome />} />
+      {/* "Password dimenticata?": request the email, and landing of its link to choose a new password */}
+      <Route path="/reset" element={<ResetPassword />} />
 
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Shell><Clients /></Shell></Protected>} />

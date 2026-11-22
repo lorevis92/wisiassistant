@@ -49,6 +49,7 @@ wisiassistant/
    supabase functions deploy generate-report --no-verify-jwt
    supabase functions deploy send-report
    supabase functions deploy send-invite
+   supabase functions deploy check-email
    supabase functions deploy telegram-webhook --no-verify-jwt
    supabase functions deploy whatsapp-webhook --no-verify-jwt
    ```
@@ -141,6 +142,15 @@ Dopo la 0006: SQL Editor → `supabase/migrations/0007_invite_flow.sql` (idempot
 In Supabase → Authentication verifica (impostazioni condivise con le altre app, non le cambia il codice):
 *Confirm email* attivo, registrazioni consentite, `<APP_URL>/welcome` e `<APP_URL>/**` tra i Redirect URLs, template
 "Invite user" con un testo adatto anche a Sardesk.
+
+### Migrazione 0008 (controlli sull'email)
+SQL Editor → `supabase/migrations/0008_email_checks.sql` (idempotente) → `supabase functions deploy check-email`.
+- `check-email` (pubblica): `{ email } → { exists }` e nient'altro; conta gli account con email confermata. Limiti:
+  30 verifiche/ora per IP e 600/ora in totale (`wa_rate_limits`). La pagina *Registrati* la usa mentre si scrive e
+  all'invio: se l'email ha già un account mostra "Accedi" / "Password dimenticata?" e non invia la registrazione.
+- `wa_invite_preview`: nella finestra d'invito dice subito se la persona ha già un account (vedrà l'invito nell'app) o
+  se partirà l'email d'iscrizione (limite 120 controlli/ora per utente).
+- "Password dimenticata?" → `/reset` (email di Supabase Auth, poi nuova password). Aggiungi `<APP_URL>/reset` ai Redirect URLs.
 
 ### Migrazione 0006 (una volta)
 1. Supabase → SQL Editor → esegui `supabase/migrations/0006_organizations.sql`. È idempotente: crea l'organizzazione

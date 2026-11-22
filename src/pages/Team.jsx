@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase, callFunction } from '../lib/supabase'
 import { useAuth, ROLE_LABEL } from '../lib/auth'
 import { APP_URL } from '../lib/brand'
@@ -251,9 +251,18 @@ function InviteModal({ open, onClose, org, isOrgAdmin, clients, onCreated, setTo
   const [f, setF] = useState({ email: '', role: 'collaborator', clients: [], days: 7 })
   const [busy, setBusy] = useState(false)
   const [mail, setMail] = useState(null) // { resend: boolean } | { missing: true }
+  const [who, setWho] = useState({ email: '', kind: null }) // kind: checking | member | existing | new | unknown
+  const timer = useRef(null)
+  const preview = async (raw) => {
+    const email = raw.trim().toLowerCase()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return setWho({ email, kind: null })
+    setWho({ email, kind: 'checking' })
+    const { data, error } = await supabase.rpc('wa_invite_preview', { p_org: org.id, p_email: email })
+    setWho((w) => (w.email === email ? { email, kind: error ? 'unknown' : data } : w))
+  }
   useEffect(() => {
     if (!open) return
-    setF({ email: '', role: 'collaborator', clients: [], days: 7 })
+    setF({ email: '', role: 'collaborator', clients: [], days: 7 }); setWho({ email: '', kind: null })
     callFunction('send-invite', { mode: 'status' }).then(setMail, () => setMail({ missing: true }))
   }, [open])
   const submit = async (e) => {
@@ -269,8 +278,16 @@ function InviteModal({ open, onClose, org, isOrgAdmin, clients, onCreated, setTo
     <Modal open={open} title={isOrgAdmin ? 'Invita nel team' : 'Invita un collaboratore'} onClose={onClose}>
       <form onSubmit={submit}>
         <div className="field"><label className="label" htmlFor="inv-email">Email</label>
-          <input id="inv-email" className="input" type="email" required autoFocus value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="nome@azienda.it" />
-          <div className="hint">La persona dovrà accedere (o registrarsi) con questo indirizzo.</div></div>
+          <input id="inv-email" className="input" type="email" required autoFocus value={f.email} placeholder="nome@azienda.it"
+            onChange={(e) => { setF({ ...f, email: e.target.value }); clearTimeout(timer.current); const v = e.target.value; timer.current = setTimeout(() => preview(v), 600) }}
+            onBlur={(e) => { clearTimeout(timer.current); preview(e.target.value) }} />
+          <div aria-live="polite">
+            {who.kind === 'checking' && <div className="hint">Controllo…</div>}
+            {who.kind === 'member' && <div className="hint" style={{ color: 'var(--danger)' }}>Fa già parte dell’organizzazione.</div>}
+            {who.kind === 'existing' && <div className="hint" style={{ color: 'var(--heading)' }}>Ha già un account: vedrà l’invito dentro Sardesk dopo l’accesso. Non partirà un’email di iscrizione.</div>}
+            {who.kind === 'new' && <div className="hint" style={{ color: 'var(--heading)' }}>Non ha ancora un account: partirà l’email di iscrizione e, confermato l’indirizzo, entrerà da sola.</div>}
+            {(!who.kind || who.kind === 'unknown') && <div className="hint">La persona dovrà accedere (o registrarsi) con questo indirizzo.</div>}
+          </div></div>
         {isOrgAdmin && (
           <div className="field"><span className="label">Ruolo</span>
             <div className="tabs" role="radiogroup" aria-label="Ruolo">
@@ -303,7 +320,7 @@ function InviteModal({ open, onClose, org, isOrgAdmin, clients, onCreated, setTo
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Annulla</button>
-          <button className="btn primary" disabled={busy}>{busy ? 'Creazione…' : 'Invia invito'}</button>
+          <button className="btn primary" disabled={busy || who.kind === 'member'}>{busy ? 'Creazione…' : 'Invia invito'}</button>
         </div>
       </form>
     </Modal>

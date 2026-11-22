@@ -4,6 +4,9 @@ export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 export const CRAWLER_URL = (import.meta.env.VITE_CRAWLER_URL || '').replace(/\/$/, '')
 
+// read before the client consumes the URL: true when the page was opened from a password-recovery email link
+export const OPENED_FROM_RECOVERY = typeof window !== 'undefined' && /type=recovery/.test(`${window.location.hash}${window.location.search}`)
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 export const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
