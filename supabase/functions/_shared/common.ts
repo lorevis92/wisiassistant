@@ -180,7 +180,7 @@ export function chunkMarkdown(text: string, opts: { maxChars?: number } = {}) {
 
 export async function sendEmail(to: string[], subject: string, html: string, text?: string) {
   const key = Deno.env.get('RESEND_API_KEY')
-  const from = Deno.env.get('REPORT_FROM_EMAIL') || 'WISI Assistant <onboarding@resend.dev>'
+  const from = Deno.env.get('REPORT_FROM_EMAIL') || 'Sardesk <onboarding@resend.dev>'
   if (!key) throw new Error('RESEND_API_KEY mancante')
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -199,7 +199,7 @@ export function mdToHtml(md: string) {
   for (const raw of lines) {
     const l = raw.trimEnd()
     const h = /^(#{1,3})\s+(.*)$/.exec(l)
-    if (h) { if (inList) { html += '</ul>'; inList = false } html += `<h${h[1].length + 1} style="font-family:Georgia,serif;font-weight:400;margin:18px 0 6px">${esc(h[2])}</h${h[1].length + 1}>`; continue }
+    if (h) { if (inList) { html += '</ul>'; inList = false } html += `<h${h[1].length + 1} style="font-weight:600;color:#10232F;margin:18px 0 6px">${esc(h[2])}</h${h[1].length + 1}>`; continue }
     if (/^\s*[-*]\s+/.test(l)) { if (!inList) { html += '<ul style="margin:6px 0 10px 18px;padding:0">'; inList = true } html += `<li style="margin:3px 0">${inline(esc(l.replace(/^\s*[-*]\s+/, '')))}</li>`; continue }
     if (inList) { html += '</ul>'; inList = false }
     if (!l.trim()) continue

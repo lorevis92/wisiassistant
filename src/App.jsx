@@ -11,7 +11,7 @@ import Standalone from './pages/Standalone'
 function Protected({ children }) {
   const { session, loading } = useAuth()
   const loc = useLocation()
-  if (loading) return <div className="empty">Caricamento…</div>
+  if (loading) return <div className="empty" style={{ paddingTop: '30vh' }}><span className="spinner" aria-label="Caricamento" /></div>
   if (!session) return <Navigate to="/login" state={{ from: loc.pathname }} replace />
   return children
 }
@@ -19,10 +19,10 @@ function Protected({ children }) {
 export default function App() {
   return (
     <Routes>
-      {/* Public standalone chat page: assistant.wisiverse.com/c/<slug> */}
+      {/* Public standalone chat page: <APP_URL>/c/<slug> */}
       <Route path="/c/:slug" element={<Standalone />} />
 
-      <Route path="/login" element={<Shell><Login /></Shell>} />
+      <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Shell><Clients /></Shell></Protected>} />
       <Route path="/clients/:id/*" element={<Protected><Shell><ClientPage /></Shell></Protected>} />
       <Route path="/inbox" element={<Protected><Shell><Inbox /></Shell></Protected>} />

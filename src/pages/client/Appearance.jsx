@@ -12,7 +12,7 @@ const PREVIEW_REPLY = 'Questa è un’anteprima: qui comparirà la risposta dell
 
 /**
  * "Aspetto" section of the client settings: launcher image, header (profile) image, name, texts, colour, position,
- * preview bubble, disclaimer, with a live preview rendered by the same code as the real widget (widget/chat-ui.js).
+ * preview bubble, disclaimer, light / dark / auto theme, with a live preview rendered by the same code as the real widget (widget/chat-ui.js).
  * Values live in clients.widget (avatar, header_avatar, bot_avatar, …) and reach the widget through the public
  * config of the `chat` function.
  */
@@ -24,6 +24,7 @@ export default function Appearance({ client, widget, setWidget, setToast }) {
   return (
     <div className="card">
       <div className="card-title">Aspetto</div>
+      <p className="card-sub">Come appare l’assistente sul sito del cliente e nella pagina chat. Le modifiche si vedono subito nell’anteprima; ricorda di salvare.</p>
       <div className="appearance-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 400px', gap: 24, alignItems: 'start' }}>
         <div className="col" style={{ gap: 0 }}>
           <div className="field">
@@ -53,6 +54,13 @@ export default function Appearance({ client, widget, setWidget, setToast }) {
             <div className="field"><label className="label">Colore principale</label>
               <ColorField value={widget.color} onChange={(v) => setWidget({ color: v })} /></div>
           </div>
+          <div className="field"><label className="label" id="wa-theme-label">Tema</label>
+            <div className="tabs" role="radiogroup" aria-labelledby="wa-theme-label">
+              {[['auto', 'Automatico'], ['light', 'Chiaro'], ['dark', 'Scuro']].map(([k, l]) => (
+                <button key={k} type="button" role="radio" aria-checked={(widget.theme || 'auto') === k} className={`tab ${(widget.theme || 'auto') === k ? 'active' : ''}`} onClick={() => setWidget({ theme: k })}>{l}</button>
+              ))}
+            </div>
+            <div className="hint">Automatico segue il sito che ospita il widget: chiaro su un sito chiaro, scuro su un sito scuro. Nella pagina chat il visitatore può cambiarlo dal menu.</div></div>
           <div className="field"><label className="label">Messaggio di benvenuto</label>
             <textarea className="textarea" style={{ minHeight: 60 }} value={widget.welcome || ''} onChange={(e) => setWidget({ welcome: e.target.value })} /></div>
           <div className="field"><label className="label">Domande suggerite (una per riga)</label>
@@ -129,7 +137,7 @@ function AvatarPicker({ slot, client, value, inherit, onChange, onRemove, setToa
           <button type="button" title="Uguale al pallino" aria-label="Uguale al pallino" aria-pressed={!cur} onClick={() => onChange(null)}
             style={{ ...avatarTile(!cur), position: 'relative' }}>
             <span style={{ width: '100%', height: '100%', display: 'block', opacity: 0.55 }} dangerouslySetInnerHTML={{ __html: avatarMarkup(inherit) }} />
-            <span style={{ position: 'absolute', fontSize: 10, fontWeight: 600, color: '#111', background: 'rgba(255,255,255,.85)', borderRadius: 4, padding: '0 3px' }}>=</span>
+            <span style={{ position: 'absolute', fontSize: 10, fontWeight: 700, color: 'var(--text)', background: 'var(--surface)', borderRadius: 4, padding: '0 4px' }}>=</span>
           </button>
         )}
         {AVATAR_PRESETS.map((p) => {
@@ -142,7 +150,7 @@ function AvatarPicker({ slot, client, value, inherit, onChange, onRemove, setToa
         })}
         <button type="button" title={cur?.url ? 'Immagine caricata' : 'Carica immagine'} aria-label={cur?.url ? 'Usa l’immagine caricata' : 'Carica immagine'} aria-pressed={isImage}
           onClick={() => (isImage || !cur?.url ? fileRef.current?.click() : set({ kind: 'image' }))}
-          style={{ ...avatarTile(isImage), background: '#f3f4f6', color: '#57606a', fontSize: 22 }}>
+          style={{ ...avatarTile(isImage), background: 'var(--surfaceAlt)', color: 'var(--textSecondary)', fontSize: 22 }}>
           {cur?.url ? <img src={cur.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '+'}
         </button>
         <input ref={fileRef} type="file" accept={ACCEPTED.join(',')} hidden onChange={pick} />
@@ -155,7 +163,7 @@ function AvatarPicker({ slot, client, value, inherit, onChange, onRemove, setToa
       )}
       {isImage && (
         <div className="row wrap" style={{ marginTop: 10, gap: 10 }}>
-          <img src={cur.url} alt="Anteprima immagine" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '3px solid #fff', boxShadow: '0 0 0 1px var(--border, #ddd)' }} />
+          <img src={cur.url} alt="Anteprima immagine" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: '3px solid var(--surface)', boxShadow: '0 0 0 1px var(--border)' }} />
           <button type="button" className="btn sm" disabled={uploading} onClick={() => fileRef.current?.click()}>{uploading ? 'Caricamento…' : 'Cambia immagine'}</button>
           <button type="button" className="btn sm danger" disabled={uploading} onClick={onRemove}>Rimuovi immagine</button>
         </div>
@@ -167,14 +175,14 @@ function AvatarPicker({ slot, client, value, inherit, onChange, onRemove, setToa
 
 const avatarTile = (active) => ({
   width: 48, height: 48, borderRadius: '50%', overflow: 'hidden', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-  border: '3px solid #fff', boxShadow: active ? '0 0 0 2px var(--text, #111)' : '0 0 0 1px var(--border, #ddd)',
+  border: '3px solid var(--surface)', boxShadow: active ? '0 0 0 2px var(--primary)' : '0 0 0 1px var(--border)', transition: 'box-shadow .15s',
 })
 
 function ColorField({ label, value, onChange }) {
   return (
     <div className="row" style={{ gap: 8 }}>
       {label && <span className="small secondary">{label}</span>}
-      <input type="color" value={/^#[0-9a-f]{6}$/i.test(value || '') ? value : '#000000'} onChange={(e) => onChange(e.target.value)} style={{ width: 36, height: 32, padding: 0, border: 'none', background: 'none' }} />
+      <input type="color" aria-label={label ? `Colore ${label.toLowerCase()}` : 'Colore'} value={/^#[0-9a-f]{6}$/i.test(value || '') ? value : '#000000'} onChange={(e) => onChange(e.target.value)} style={{ width: 38, height: 38, padding: 3, border: '1px solid var(--borderStrong)', borderRadius: 10, background: 'var(--surface)', cursor: 'pointer' }} />
       <input className="input mono" style={{ width: 100 }} value={value || ''} onChange={(e) => onChange(e.target.value)} />
     </div>
   )
@@ -184,6 +192,9 @@ function ColorField({ label, value, onChange }) {
 function LivePreview({ client, widget }) {
   const closedRef = useRef(null)
   const openRef = useRef(null)
+  // which host theme to simulate: a light or a dark client site
+  const [site, setSite] = useState('light')
+  const theme = widget.theme === 'light' || widget.theme === 'dark' ? widget.theme : site
   const cfgKey = JSON.stringify(widget)
   const cfg = useMemo(() => ({ name: client.name, widget: { ...widget, lead_capture: 'off' } }), [cfgKey, client.name])
 
@@ -194,18 +205,30 @@ function LivePreview({ client, widget }) {
     }
     let a, b
     const t = setTimeout(() => {
-      a = mountChat(closedRef.current, { cfg, api, slug: 'preview', mode: 'preview', preview: 'closed' })
-      b = mountChat(openRef.current, { cfg, api, slug: 'preview', mode: 'preview', preview: 'open' })
+      a = mountChat(closedRef.current, { cfg, api, slug: 'preview', mode: 'preview', preview: 'closed', theme })
+      b = mountChat(openRef.current, { cfg, api, slug: 'preview', mode: 'preview', preview: 'open', theme })
     }, 150)
     return () => { clearTimeout(t); a?.destroy(); b?.destroy() }
-  }, [cfg])
+  }, [cfg, theme])
 
-  const frame = { position: 'relative', borderRadius: 10, overflow: 'hidden', background: 'linear-gradient(180deg,#f6f7f9,#eceef1)', border: '1px solid var(--border, #e5e5e5)' }
+  // the frame imitates the client's site: light or dark page behind the widget
+  const frame = {
+    position: 'relative', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--border)',
+    background: site === 'dark' ? 'linear-gradient(180deg,#1b2a33,#101b22)' : 'linear-gradient(180deg,#f7f8f6,#e9ece7)',
+  }
   return (
     <div className="col" style={{ gap: 10, position: 'sticky', top: 80 }}>
-      <span className="small secondary">Anteprima dal vivo · chat chiusa</span>
+      <div className="row between wrap" style={{ gap: 8 }}>
+        <span className="small secondary">Anteprima dal vivo</span>
+        <div className="tabs" role="radiogroup" aria-label="Simula il sito del cliente">
+          {[['light', 'Sito chiaro'], ['dark', 'Sito scuro']].map(([k, l]) => (
+            <button key={k} type="button" role="radio" aria-checked={site === k} className={`tab ${site === k ? 'active' : ''}`} style={{ padding: '5px 10px', fontSize: 12 }} onClick={() => setSite(k)}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <span className="small muted">Chat chiusa</span>
       <div style={{ ...frame, height: 120 }}><div ref={closedRef} style={{ height: '100%' }} /></div>
-      <span className="small secondary">Chat aperta (puoi scrivere per provare)</span>
+      <span className="small muted">Chat aperta (puoi scrivere per provare)</span>
       <div style={{ ...frame, height: 640 }}><div ref={openRef} style={{ height: '100%' }} /></div>
     </div>
   )
@@ -277,7 +300,7 @@ function AvatarCropper({ file, busy, onCancel, onDone }) {
         <div className="col" style={{ alignItems: 'center', gap: 14 }}>
           <canvas ref={canvasRef} width={VIEW} height={VIEW} aria-label="Area di ritaglio: trascina per spostare l’immagine"
             onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
-            style={{ width: VIEW, height: VIEW, borderRadius: 8, cursor: 'grab', touchAction: 'none', background: '#eee' }} />
+            style={{ width: VIEW, height: VIEW, borderRadius: 12, cursor: 'grab', touchAction: 'none', background: 'var(--surfaceAlt)' }} />
           <label className="row small secondary" style={{ gap: 10, width: VIEW }}>
             Zoom
             <input type="range" min="1" max="4" step="0.01" value={zoom} style={{ flex: 1 }}

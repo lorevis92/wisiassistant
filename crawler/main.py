@@ -1,5 +1,5 @@
 """
-WISI Assistant — crawler service (Crawl4AI + FastAPI), deployed on Railway/Render.
+Sardesk — crawler service (Crawl4AI + FastAPI), deployed on Railway/Render.
 
 Endpoints (Bearer = Supabase user JWT, verified against Supabase Auth; the user must be in wa_admins):
   POST /map    {client_id, url}            → discovers every URL of the site (sitemap + link discovery), no content download
@@ -76,7 +76,7 @@ log_env_diagnostics()
 if not SUPABASE_URL or not SERVICE_KEY:
     raise RuntimeError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY sono obbligatorie")
 
-app = FastAPI(title="WISI Assistant crawler")
+app = FastAPI(title="Sardesk crawler")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 SB_HEADERS = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}", "Content-Type": "application/json"}

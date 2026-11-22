@@ -105,9 +105,9 @@ async function notifyEscalation(sb: any, client: any, conv: any, reason: string)
   const { data: msgs } = await sb.from('wa_messages').select('role,content,created_at').eq('conversation_id', conv.id).order('created_at')
   const app = Deno.env.get('PUBLIC_APP_URL') || ''
   const thread = (msgs || []).map((m: any) => `<p><b>${m.role === 'user' ? 'Utente' : m.role === 'human' ? 'Operatore' : 'Bot'}</b> <span style="color:#999;font-size:11px">${new Date(m.created_at).toLocaleString('it-CH')}</span><br>${String(m.content).replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`).join('')
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;color:#111"><h2 style="font-family:Georgia,serif;font-weight:400">Richiesta di intervento umano — ${client.name}</h2>
+  const html = `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.55;color:#10232F"><div style="color:#0F5A7F;font-weight:700;font-size:16px;margin-bottom:6px">Sardesk</div><h2 style="font-weight:600;font-size:20px;margin:0 0 10px">Richiesta di intervento umano — ${client.name}</h2>
     <p><b>Motivo:</b> ${reason}<br><b>Canale:</b> ${conv.channel}${conv.lead_name ? `<br><b>Nome:</b> ${conv.lead_name}` : ''}${conv.lead_email ? `<br><b>Email:</b> ${conv.lead_email}` : ''}${conv.page_url ? `<br><b>Pagina:</b> ${conv.page_url}` : ''}</p>
-    ${app ? `<p><a href="${app}/clients/${client.id}/inbox" style="background:#E8352A;color:#fff;padding:8px 14px;border-radius:3px;text-decoration:none;font-weight:700">Apri in Inbox</a></p>` : ''}
-    <hr style="border:0;border-top:1px solid #E8E8E8">${thread}</div>`
+    ${app ? `<p><a href="${app}/clients/${client.id}/inbox" style="background:#0F5A7F;color:#fff;padding:9px 16px;border-radius:10px;text-decoration:none;font-weight:600">Apri in Inbox</a></p>` : ''}
+    <hr style="border:0;border-top:1px solid #E0E3DC">${thread}</div>`
   await sendEmail([client.escalation_email], `[${client.name}] Richiesta di intervento umano`, html)
 }

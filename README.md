@@ -1,6 +1,7 @@
-# WISI Assistant
+# Sardesk
 
-Piattaforma di customer support AI stile Chatbase, parte del WiSiVERSE.
+Piattaforma di customer support AI (sardo + desk: l'assistente che ti aiuta).
+I nomi tecnici restano quelli della prima versione: prefisso `wa_` di tabelle/funzioni/bucket, nome del repository e variabili.
 Un admin (tu) gestisce N clienti; ogni cliente ha la propria knowledge base (sito crawlato + documenti + FAQ),
 il proprio modello AI, il proprio widget e i propri canali.
 
@@ -41,7 +42,7 @@ wisiassistant/
    supabase login
    supabase link --project-ref <PROJECT_REF>
    supabase secrets set OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... RESEND_API_KEY=re_... \
-     REPORT_FROM_EMAIL="WISI Assistant <assistant@tuodominio.com>" PUBLIC_APP_URL=https://assistant.wisiverse.com \
+     REPORT_FROM_EMAIL="Sardesk <assistant@tuodominio.com>" PUBLIC_APP_URL=https://sardesk.ai \
      TELEGRAM_WEBHOOK_SECRET=<stringa-casuale> META_VERIFY_TOKEN=<stringa-casuale>
    supabase functions deploy chat --no-verify-jwt
    supabase functions deploy ingest
@@ -74,12 +75,18 @@ wisiassistant/
 1. Importa il repo. Framework: Vite. Build command `npm run build`, output `dist`.
    È tutto già in `vercel.json` (`framework: vite`): Vercel lo tratta come progetto singolo. `.vercelignore` esclude `crawler/`
    (gira su Railway/Render) e `supabase/` (deploy con la CLI Supabase).
-2. Environment Variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_CRAWLER_URL` (URL Railway).
+2. Environment Variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_CRAWLER_URL` (URL Railway) e, facoltativa,
+   `VITE_PUBLIC_APP_URL` = indirizzo pubblico dell'app (es. `https://sardesk.ai`). È usato nello snippet del widget e nei link
+   alla pagina chat; se manca si usa il dominio da cui apri il pannello. Quando colleghi `sardesk.ai` basta cambiare questa
+   variabile (e `PUBLIC_APP_URL` nei secrets di Supabase, per i link nelle email) e rifare il deploy.
 3. Deploy. Il widget è servito su `https://<dominio>/widget.js`.
    Ricorda: dopo aver aggiunto env var su Vercel serve un redeploy.
 
-### 4. Loghi
-Copia in `/public`: `logo-wisiassistant.png` (WISI + "Assistant") e `logo-wisiverse.png` (footer). Se mancano l'app funziona lo stesso (mostra solo il testo).
+### 4. Marchio e design
+Il logotipo (nuraghe stilizzato con la luce corallo + scritta "Sardesk") è in `src/components/Brand.jsx`, la favicon in
+`public/favicon.svg`. Colori, tipografia, raggi, ombre e spaziature sono design token in un solo file:
+`src/styles/tokens.css` (tema chiaro e scuro). Il tema del pannello (chiaro / scuro / automatico) si sceglie in alto a destra
+e viene ricordato. Il widget ha un suo tema in Impostazioni → Aspetto (automatico = segue il sito che lo ospita).
 
 ## Uso
 
@@ -109,7 +116,7 @@ Crawler locale: `cd crawler && pip install -r requirements.txt && playwright ins
 - Per aggiungere un modello: una riga in `src/lib/models.js` (provider/id). Provider supportati in `supabase/functions/_shared/common.ts`.
 
 ## Database condiviso
-WISI Assistant vive nel progetto Supabase **wisinvaders**, insieme ad altre app. Per isolarlo:
+Sardesk vive nel progetto Supabase **wisinvaders**, insieme ad altre app. Per isolarlo:
 - tutto ciò che crea ha prefisso `wa_`: tabelle (`wa_clients`, `wa_pages`, `wa_chunks`, `wa_crawl_jobs`, `wa_conversations`, `wa_messages`,
   `wa_leads`, `wa_reports`, `wa_rate_limits`, `wa_admins`), vista `wa_client_stats`, funzioni `wa_match_chunks`, `wa_check_rate_limit`,
   `wa_is_admin`, `wa_touch_updated_at`, `wa_on_message_insert`, trigger, indici, policy, job cron (`wa_reports`, `wa_ratelimit_cleanup`, `wa_recrawl`)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase, callCrawler } from '../../lib/supabase'
-import { StatusBadge, Toast, useToast, Modal } from '../../components/ui'
+import { StatusBadge, Toast, useToast, Modal, EmptyState } from '../../components/ui'
 import { fmtDateTime, matchesPattern, staleYear, urlPathPrefixes } from '../../lib/utils'
 
 const StaleBadge = ({ year }) => (year ? <span className="badge yellow" title={`Anno ${year} nel titolo o nell’URL: la pagina potrebbe essere obsoleta`}>⚠ {year}</span> : null)
@@ -140,7 +140,7 @@ function Discover({ client, reload, setToast }) {
   return (
     <div className="col" style={{ gap: 16 }}>
       <div className="card">
-        <div className="card-title">1 · Scopri le pagine del sito</div>
+        <div className="card-title">1. Scopri le pagine del sito</div>
         <div className="row">
           <input className="input mono" value={startUrl} onChange={(e) => setStartUrl(e.target.value)} placeholder="https://www.esempio.ch" />
           <button className="btn primary" disabled={mapping || !startUrl} onClick={runMap}>{mapping ? 'Mapping…' : 'Mappa il sito'}</button>
@@ -154,7 +154,7 @@ function Discover({ client, reload, setToast }) {
 
       {urls.length > 0 && (
         <div className="card">
-          <div className="card-title">2 · Seleziona cosa indicizzare</div>
+          <div className="card-title">2. Scegli cosa indicizzare</div>
 
           <div className="row wrap" style={{ marginBottom: 10 }}>
             <input className="input" style={{ maxWidth: 320 }} placeholder="Cerca negli URL…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -186,7 +186,7 @@ function Discover({ client, reload, setToast }) {
             </div>
           )}
 
-          <div style={{ maxHeight: 440, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>
+          <div className="table-wrap" style={{ maxHeight: 440 }}>
             <table className="table">
               <thead><tr><th style={{ width: 30 }}></th><th>URL</th><th style={{ width: 150 }}>Stato</th></tr></thead>
               <tbody>
@@ -205,7 +205,7 @@ function Discover({ client, reload, setToast }) {
           </div>
           <div className="row between" style={{ marginTop: 12 }}>
             <span className="small secondary">{visible.length} visibili · {urls.length} totali · <b>{selected.size}</b> selezionati</span>
-            <button className="btn primary" disabled={!selected.size || ['running', 'queued', 'mapping'].includes(job?.status)} onClick={runCrawl}>3 · Crawla {selected.size} pagine</button>
+            <button className="btn primary" disabled={!selected.size || ['running', 'queued', 'mapping'].includes(job?.status)} onClick={runCrawl}>3. Indicizza {selected.size} pagine</button>
           </div>
         </div>
       )}
@@ -311,7 +311,7 @@ function IndexedPages({ client, setToast }) {
       </div>
 
       {(staleActive.length > 0 || onlyStale) && (
-        <div className="card tight row between wrap" style={{ marginBottom: 10, borderColor: 'var(--yellow, #d4a017)' }}>
+        <div className="callout warn row between wrap" style={{ marginBottom: 10 }}>
           <span className="small">⚠ <b>{staleActive.length}</b> pagine attive sembrano vecchie (anno ≤ {new Date().getFullYear() - 2} nel titolo o nell’URL, es. offerte o eventi passati).</span>
           <span className="row wrap" style={{ gap: 6 }}>
             <button className="btn sm" onClick={() => setOnlyStale(!onlyStale)}>{onlyStale ? 'Mostra tutte' : 'Mostra solo queste'}</button>
@@ -333,9 +333,9 @@ function IndexedPages({ client, setToast }) {
       </div>
 
       {pages === null ? <div className="empty">Caricamento…</div> : pages.length === 0 ? (
-        <div className="empty">Nessuna pagina indicizzata. Vai su “Scopri & crawla”.</div>
+        <EmptyState icon="pages" title="Nessuna pagina indicizzata">Apri “Scopri & crawla”, mappa il sito e scegli le pagine da cui l’assistente deve imparare.</EmptyState>
       ) : (
-        <div style={{ maxHeight: 560, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>
+        <div className="table-wrap" style={{ maxHeight: 560 }}>
           <table className="table">
             <thead><tr><th style={{ width: 30 }}></th><th>URL / titolo</th><th>Stato</th><th>Chunk</th><th>Parole</th><th>Ultimo crawl</th><th></th></tr></thead>
             <tbody>
@@ -392,7 +392,7 @@ function CrawlHistory({ client }) {
                 <td className="small">
                   {j.summary || (j.status === 'done' ? `${j.done_count} ok · ${j.error_count} errori` : '')}
                   {j.mapped_count != null ? <span className="secondary"> · {j.mapped_count} URL mappati</span> : null}
-                  {j.error ? <div style={{ color: j.status === 'error' ? 'var(--primary)' : 'var(--textSecondary)' }}>{j.error}</div> : null}
+                  {j.error ? <div style={{ color: j.status === 'error' ? 'var(--danger)' : 'var(--textSecondary)' }}>{j.error}</div> : null}
                 </td>
               </tr>
             ))}

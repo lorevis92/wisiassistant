@@ -1,12 +1,13 @@
 /**
- * WISI Assistant chat UI (vanilla JS, Shadow DOM). One implementation, three uses:
+ * Sardesk chat UI (vanilla JS, Shadow DOM). One implementation, three uses:
  *  - mode 'widget'  → launcher + preview bubble + floating panel on the client's site (widget/widget.js)
  *  - mode 'page'    → full-page chat, no launcher / preview bubble (src/pages/Standalone.jsx, /c/:slug)
  *  - mode 'preview' → live preview in the admin panel (no storage, fake API), preview: 'open' | 'closed'
  *
  * All appearance values come from the public config returned by the `chat` edge function (mode 'config'):
  * cfg.widget = { title, welcome, suggestions[], color, position, avatar{}, header_avatar{}|null, bot_avatar, teaser_text, teaser_delay,
- *               disclaimer, lead_capture }  (see widget/avatars.js for the avatar fallbacks)
+ *               disclaimer, lead_capture, theme }  (see widget/avatars.js for the avatar fallbacks)
+ * theme: 'light' | 'dark' | 'auto' (default): auto follows the hosting site (hostIsDark), live.
  */
 import { avatarMarkup, resolveAvatar, resolveHeaderAvatar, safeColor } from './avatars.js'
 
@@ -14,13 +15,14 @@ export const DEFAULT_DISCLAIMER = 'Le informazioni potrebbero non essere del tut
 export const DEFAULT_WIDGET = {
   title: 'Assistente',
   welcome: 'Ciao! Come posso aiutarti?',
-  color: '#E8352A',
+  color: '#0F5A7F',
   position: 'right',
   suggestions: [],
   teaser_text: 'Ciao! Hai bisogno di aiuto?',
   teaser_delay: 0,
   disclaimer: DEFAULT_DISCLAIMER,
   lead_capture: 'off',
+  theme: 'auto',
 }
 
 /** Normalized, safe widget settings (defaults for missing values; an explicitly empty disclaimer hides it). */
@@ -42,6 +44,7 @@ export function normalizeWidget(raw) {
     avatar: resolveAvatar(w),              // launcher (chat closed)
     headerAvatar: resolveHeaderAvatar(w),  // header + bot messages (chat open)
     botAvatar: w.bot_avatar === true,
+    theme: ['light', 'dark'].includes(w.theme) ? w.theme : 'auto',
   }
 }
 
@@ -102,10 +105,10 @@ function luminance(hex) {
 
 function ensureFont() {
   // @font-face inside a shadow root is ignored by some browsers: the font stylesheet goes in the page <head>
-  if (document.getElementById('wa-inter-font')) return
+  if (document.getElementById('wa-brand-font')) return
   const l = document.createElement('link')
-  l.id = 'wa-inter-font'; l.rel = 'stylesheet'
-  l.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap'
+  l.id = 'wa-brand-font'; l.rel = 'stylesheet'
+  l.href = 'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap'
   document.head.appendChild(l)
 }
 
@@ -122,25 +125,32 @@ const ICON = {
 function styles(w, mode) {
   const side = w.position === 'left' ? 'left' : 'right'
   const other = side === 'left' ? 'right' : 'left'
-  const on = luminance(w.color) > 0.55 ? '#1f2328' : '#ffffff'
-  const link = luminance(w.color) < 0.45 ? w.color : '#1f2328'
+  const L = luminance(w.color)
+  const on = L > 0.5 ? '#10232F' : '#ffffff'
+  // links inside assistant bubbles: the client colour when it reads on that bubble, else the ink
+  const linkLight = L < 0.4 ? w.color : '#10232F'
+  const linkDark = L > 0.18 ? w.color : '#8FD0E2'
   return `
 :host{all:initial;${mode === 'widget' ? '' : 'display:block;height:100%;'}}
-.wa{--c:${w.color};--on:${on};--link:${link};--pos:${mode === 'widget' ? 'fixed' : 'absolute'};--ink:#1f2328;--muted:#8b949e;--soft:#f2f3f5;--line:#e6e8eb;
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.5;color:var(--ink);
-  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-align:left;${mode === 'widget' ? '' : 'position:relative;height:100%;'}}
+.wa{--c:${w.color};--on:${on};--pos:${mode === 'widget' ? 'fixed' : 'absolute'};
+  --bg:#ffffff;--ink:#10232F;--ink2:#4C5A61;--muted:#7A858A;--soft:#F0F2EE;--line:#E0E3DC;--hover:#F0F2EE;--field:#ffffff;--ring:#ffffff;
+  --link:${linkLight};--shadow:0 18px 50px -12px rgba(10,30,45,.30),0 4px 14px -4px rgba(10,30,45,.12);--pop:0 10px 30px -6px rgba(10,30,45,.22),0 0 0 1px rgba(10,30,45,.05);
+  font-family:'Instrument Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.5;color:var(--ink);
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-align:left;color-scheme:light;${mode === 'widget' ? '' : 'position:relative;height:100%;'}}
+.wa.dark{--bg:#0F2230;--ink:#E5ECEE;--ink2:#A2B2B8;--muted:#7F939B;--soft:#17323F;--line:#213D4C;--hover:#17323F;--field:#0C1D29;--ring:#15303F;
+  --link:${linkDark};--shadow:0 22px 60px -14px rgba(0,0,0,.7),0 4px 16px -4px rgba(0,0,0,.5);--pop:0 12px 34px -8px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06);color-scheme:dark}
 :where(.wa) *,:where(.wa) *::before,:where(.wa) *::after{box-sizing:border-box;font-family:inherit;letter-spacing:normal}
 :where(.wa) button{font:inherit;color:inherit;background:none;border:0;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
-.wa button:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+.wa button:focus-visible,.wa input:focus-visible{outline:2px solid var(--c);outline-offset:2px}
 [hidden]{display:none!important}
 
 /* launcher */
-.launcher{position:var(--pos);bottom:20px;${side}:20px;width:60px;height:60px;border-radius:50%;border:3px solid #fff;background:#fff;overflow:hidden;
-  box-shadow:0 6px 22px rgba(15,20,30,.22),0 1px 3px rgba(15,20,30,.12);z-index:2147483000;transition:transform .2s ease}
-.launcher:hover{transform:scale(1.05)}
+.launcher{position:var(--pos);bottom:20px;${side}:20px;width:60px;height:60px;border-radius:50%;border:3px solid var(--ring);background:var(--ring);overflow:hidden;
+  box-shadow:0 8px 24px -4px rgba(10,30,45,.32),0 2px 4px rgba(10,30,45,.12);z-index:2147483000;transition:transform .25s cubic-bezier(.2,.7,.2,1),box-shadow .25s}
+.launcher:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 12px 30px -6px rgba(10,30,45,.36),0 2px 4px rgba(10,30,45,.12)}
 .launcher:active{transform:scale(.97)}
-.l-face,.l-close{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .2s ease,transform .25s ease}
-.l-close{background:#1f2328;color:#fff;opacity:0;transform:rotate(-90deg)}
+.l-face,.l-close{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .2s ease,transform .3s cubic-bezier(.2,.7,.2,1)}
+.l-close{background:var(--c);color:var(--on);opacity:0;transform:rotate(-90deg)}
 .is-open .l-close{opacity:1;transform:none}
 .is-open .l-face{opacity:0;transform:scale(.8)}
 .l-face svg,.avatar svg,.avatar-img{width:100%;height:100%;display:block;object-fit:cover}
@@ -150,37 +160,41 @@ function styles(w, mode) {
 .row.bot.with-av.has-fb .mini-av{margin-bottom:30px}
 
 /* preview bubble */
-.teaser{position:var(--pos);bottom:28px;${side}:92px;max-width:min(260px,calc(100% - 120px));z-index:2147483000;animation:wa-pop .28s ease both}
+.teaser{position:var(--pos);bottom:28px;${side}:92px;max-width:min(260px,calc(100% - 120px));z-index:2147483000;animation:wa-pop .32s cubic-bezier(.2,.7,.2,1) both}
 .mode-widget .teaser{max-width:min(260px,calc(100vw - 120px))}
-.teaser-msg{display:block;width:100%;text-align:left;background:#fff;color:var(--ink);border-radius:18px;padding:11px 15px;font-size:14px;line-height:1.45;
-  box-shadow:0 6px 24px rgba(15,20,30,.16),0 1px 2px rgba(15,20,30,.08)}
-.teaser-x{position:absolute;top:-9px;${other}:-9px;width:22px;height:22px;border-radius:50%;background:#fff;color:#57606a;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 1px 5px rgba(15,20,30,.22);opacity:0;transition:opacity .15s}
+.teaser-msg{display:block;width:100%;text-align:left;background:var(--bg);color:var(--ink);border-radius:18px;border-bottom-${side}-radius:6px;padding:11px 15px;font-size:14px;line-height:1.45;box-shadow:var(--pop)}
+.teaser-x{position:absolute;top:-9px;${other}:-9px;width:22px;height:22px;border-radius:50%;background:var(--bg);color:var(--ink2);display:flex;align-items:center;justify-content:center;
+  box-shadow:var(--pop);opacity:0;transition:opacity .15s}
 .teaser:hover .teaser-x,.teaser:focus-within .teaser-x{opacity:1}
 @media (hover:none){.teaser-x{opacity:1}}
 
 /* panel */
-.panel{position:var(--pos);bottom:92px;${side}:20px;width:380px;max-width:calc(100% - 40px);height:min(640px,calc(100vh - 116px));height:min(640px,calc(100dvh - 116px));
-  background:#fff;border-radius:18px;box-shadow:0 12px 48px rgba(15,20,30,.18),0 2px 8px rgba(15,20,30,.08);display:flex;flex-direction:column;overflow:hidden;z-index:2147483000;
-  opacity:0;visibility:hidden;transform:translateY(14px) scale(.98);transform-origin:bottom ${side};pointer-events:none;
-  transition:opacity .2s ease,transform .22s ease,visibility 0s linear .22s}
+.panel{position:var(--pos);bottom:92px;${side}:20px;width:384px;max-width:calc(100% - 40px);height:min(640px,calc(100vh - 116px));height:min(640px,calc(100dvh - 116px));
+  background:var(--bg);color:var(--ink);border-radius:20px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;z-index:2147483000;
+  opacity:0;visibility:hidden;transform:translateY(16px) scale(.98);transform-origin:bottom ${side};pointer-events:none;
+  transition:opacity .2s ease,transform .28s cubic-bezier(.2,.7,.2,1),visibility 0s linear .28s}
+.dark .panel{box-shadow:var(--shadow),0 0 0 1px var(--line)}
 .mode-widget .panel{max-width:calc(100vw - 40px)}
-.is-open .panel{opacity:1;visibility:visible;transform:none;pointer-events:auto;transition:opacity .2s ease,transform .22s ease,visibility 0s}
+.is-open .panel{opacity:1;visibility:visible;transform:none;pointer-events:auto;transition:opacity .2s ease,transform .28s cubic-bezier(.2,.7,.2,1),visibility 0s}
 .mode-preview .panel{height:calc(100% - 112px);max-height:640px}
 
-.head{display:flex;align-items:center;gap:10px;padding:12px 10px 12px 14px;border-bottom:1px solid var(--line);background:#fff;flex:none}
-.head .avatar{width:34px;height:34px;border-radius:50%;overflow:hidden;flex:none;background:var(--soft)}
-.head .name{flex:1;min-width:0;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#57606a;flex:none;transition:background .15s,color .15s}
-.icon:hover{background:#f3f4f6;color:var(--ink)}
+.head{display:flex;align-items:center;gap:11px;padding:12px 10px 12px 14px;border-bottom:1px solid var(--line);background:var(--bg);flex:none;position:relative}
+.head::after{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:var(--c)}
+.head .avatar{width:36px;height:36px;border-radius:50%;overflow:hidden;flex:none;background:var(--soft)}
+.head .name{flex:1;min-width:0;font-weight:600;font-size:15.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--ink2);flex:none;transition:background .15s,color .15s}
+.icon:hover{background:var(--hover);color:var(--ink)}
 .menu-wrap{position:relative}
-.menu{position:absolute;top:38px;right:0;min-width:176px;background:#fff;border-radius:12px;padding:6px;z-index:3;
-  box-shadow:0 10px 30px rgba(15,20,30,.16),0 0 0 1px rgba(15,20,30,.06);animation:wa-pop .15s ease both}
-.menu button{display:block;width:100%;text-align:left;padding:9px 12px;border-radius:8px;font-size:14px}
-.menu button:hover:not(:disabled),.menu button:focus-visible{background:#f3f4f6;outline:none}
-.menu button:disabled{color:#a7adb5;cursor:default}
+.menu{position:absolute;top:40px;right:0;min-width:190px;background:var(--bg);border-radius:14px;padding:6px;z-index:3;box-shadow:var(--pop);animation:wa-pop .16s ease both}
+.menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;padding:9px 12px;border-radius:9px;font-size:14px;color:var(--ink)}
+.menu button:hover:not(:disabled),.menu button:focus-visible{background:var(--hover);outline:none}
+.menu button:disabled{color:var(--muted);cursor:default}
+.menu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
+.menu .mlabel{font-size:12px;color:var(--muted);padding:4px 12px 2px}
+.menu button[aria-checked="true"]::after{content:'';width:7px;height:7px;border-radius:50%;background:var(--c)}
+.dark .menu button[aria-checked="true"]::after{background:var(--link)}
 
-.body{flex:1;overflow-y:auto;padding:18px 14px 8px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain;scrollbar-width:thin}
+.body{flex:1;overflow-y:auto;padding:18px 14px 8px;display:flex;flex-direction:column;gap:10px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
 .row{display:flex;flex-direction:column;max-width:86%}
 .row.user{align-self:flex-end;align-items:flex-end}
 .row.bot{align-self:flex-start;align-items:flex-start}
@@ -191,35 +205,36 @@ function styles(w, mode) {
 .bubble a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .row.bot .bubble a{color:var(--link)}
 .bubble strong{font-weight:600}
-.row.fresh{animation:wa-in .22s ease both}
+.row.fresh{animation:wa-in .24s cubic-bezier(.2,.7,.2,1) both}
 .fb{display:flex;gap:2px;margin:2px 2px 0;opacity:0;transition:opacity .15s}
 .row:hover .fb,.fb:focus-within{opacity:1}
 @media (hover:none){.fb{opacity:.65}}
 .fb button{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--muted)}
-.fb button:hover{background:#f3f4f6;color:var(--ink)}
+.fb button:hover{background:var(--hover);color:var(--ink)}
 .fb button.on{color:var(--c)}
+.dark .fb button.on{color:var(--link)}
 .sug{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
-.sug button{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:13.5px;line-height:1.35;color:var(--ink);text-align:left;transition:border-color .15s,background .15s}
-.sug button:hover{border-color:var(--c);background:#fafbfc}
+.sug button{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-size:13.5px;line-height:1.35;color:var(--ink);text-align:left;transition:border-color .15s,background .15s}
+.sug button:hover{border-color:var(--c);background:var(--hover)}
 .typing{display:inline-flex;align-items:center;gap:4px;padding:14px 15px}
-.typing i{width:7px;height:7px;border-radius:50%;background:#9aa1a9;animation:wa-dot 1.2s infinite ease-in-out}
+.typing i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:wa-dot 1.2s infinite ease-in-out}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
 
-.lead{align-self:stretch;background:#f7f8fa;border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;animation:wa-in .22s ease both}
+.lead{align-self:stretch;background:var(--soft);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;animation:wa-in .22s ease both}
 .lead p{margin:0 0 2px;font-weight:500;font-size:14px}
-.lead label{font-size:12.5px;font-weight:500;color:#57606a;margin-top:2px}
-.lead input{width:100%;border:1px solid var(--line);border-radius:999px;padding:9px 14px;font:inherit;font-size:14px;color:var(--ink);background:#fff;outline:0;transition:border-color .15s}
+.lead label{font-size:12.5px;font-weight:500;color:var(--ink2);margin-top:2px}
+.lead input{width:100%;border:1px solid var(--line);border-radius:999px;padding:9px 14px;font:inherit;font-size:14px;color:var(--ink);background:var(--field);outline:0;transition:border-color .15s}
 .lead input:focus{border-color:var(--c)}
 .lead .primary{margin-top:6px;background:var(--c);color:var(--on);border-radius:999px;padding:10px 14px;font-weight:600;font-size:14px}
 
 .composer{padding:8px 12px 4px;flex:none}
-.pill{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 5px 5px 16px;background:#fff;transition:border-color .15s,box-shadow .15s}
-.pill:focus-within{border-color:#c9ced4;box-shadow:0 0 0 3px rgba(15,20,30,.04)}
-.pill input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;font-size:14.5px;color:var(--ink);padding:6px 0}
+.pill{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 5px 5px 16px;background:var(--field);transition:border-color .15s,box-shadow .15s}
+.pill:focus-within{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent)}
+.pill input{flex:1;min-width:0;border:0;outline:0!important;background:transparent;font:inherit;font-size:14.5px;color:var(--ink);padding:6px 0}
 .pill input::placeholder{color:var(--muted)}
 .pill input:disabled{cursor:not-allowed}
 .mic-slot{width:34px;height:34px;flex:none}
-.send{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:#eceef1;color:#a7adb5;transition:background .15s,color .15s,transform .15s}
+.send{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--soft);color:var(--muted);transition:background .15s,color .15s,transform .15s}
 .send:not(:disabled){background:var(--c);color:var(--on)}
 .send:not(:disabled):active{transform:scale(.94)}
 .send:disabled{cursor:default}
@@ -232,20 +247,50 @@ function styles(w, mode) {
 .mode-page .body{padding-top:24px}
 
 @media (max-width:520px){
-  .mode-widget .panel{left:8px;right:8px;top:8px;bottom:84px;width:auto;max-width:none;height:auto;border-radius:16px}
+  .mode-widget .panel{left:8px;right:8px;top:8px;bottom:84px;width:auto;max-width:none;height:auto;border-radius:18px}
   .mode-widget .launcher{bottom:14px;${side}:14px}
   .mode-widget .teaser{bottom:22px;${side}:84px}
 }
 @keyframes wa-pop{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:none}}
-@keyframes wa-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes wa-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 @keyframes wa-dot{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
 @media (prefers-reduced-motion:reduce){.wa *{animation:none!important;transition:none!important}}
 `
 }
 
+/**
+ * Theme of the site hosting the chat, for widget.theme = 'auto': explicit theme attributes/classes first
+ * (data-theme, data-bs-theme, .dark …), then the real page background, then the declared color-scheme.
+ * A site without any background is treated as light (browsers paint it white).
+ */
+const THEME_ATTRS = ['data-theme', 'data-bs-theme', 'data-color-mode', 'data-mode', 'data-color-scheme']
+export function hostIsDark(doc = document) {
+  const els = [doc.documentElement, doc.body].filter(Boolean)
+  for (const el of els) {
+    for (const a of THEME_ATTRS) {
+      const v = String(el.getAttribute(a) || '').toLowerCase()
+      if (/\bdark\b/.test(v)) return true
+      if (/\blight\b/.test(v)) return false
+    }
+    const cl = el.classList
+    if (cl && (cl.contains('dark') || cl.contains('dark-mode') || cl.contains('theme-dark') || cl.contains('is-dark'))) return true
+    if (cl && (cl.contains('light') || cl.contains('light-mode') || cl.contains('theme-light'))) return false
+  }
+  for (const el of [doc.body, doc.documentElement]) {
+    if (!el) continue
+    const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/)
+    if (!m) continue
+    const [r, g, b, al = 1] = m[1].split(/[\s,/]+/).filter(Boolean).map(Number)
+    if (al < 0.5) continue
+    return luminance('#' + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')) < 0.18
+  }
+  return /^dark$/.test(String(getComputedStyle(doc.documentElement).colorScheme || '').trim())
+}
+
 // ------------------------------------------------------------------ mount
 export function mountChat(host, opts) {
-  const { cfg, api, slug, mode = 'widget', channel = 'web', preview = 'open' } = opts
+  // theme: forced theme (admin preview); themeMenu: { get(), set(pref) } adds a theme choice to the menu (standalone page)
+  const { cfg, api, slug, mode = 'widget', channel = 'web', preview = 'open', theme: forcedTheme, themeMenu } = opts
   const w = normalizeWidget(cfg.widget)
   const isWidget = mode === 'widget', isPage = mode === 'page', isPreview = mode === 'preview'
   const session = isPreview ? noStore : storage('sessionStorage')
@@ -278,6 +323,10 @@ export function mountChat(host, opts) {
         <div class="menu" role="menu" hidden>
           <button type="button" role="menuitem" data-act="new">Nuova chat</button>
           <button type="button" role="menuitem" data-act="end">Termina chat</button>
+          ${themeMenu ? `<hr><div class="mlabel" aria-hidden="true">Tema</div>
+          <button type="button" role="menuitemradio" data-theme="light">Chiaro</button>
+          <button type="button" role="menuitemradio" data-theme="dark">Scuro</button>
+          <button type="button" role="menuitemradio" data-theme="auto">Automatico</button>` : ''}
         </div>
       </div>
       ${isPage ? '' : `<button class="icon close" type="button" aria-label="Chiudi la chat">${ICON.close}</button>`}
@@ -306,6 +355,25 @@ export function mountChat(host, opts) {
 
   const welcome = () => ({ role: 'assistant', content: w.welcome })
 
+  // ---------------------------------------------------------------- theme
+  // page mode: the standalone page owns the document theme (visitor choice or client default), the chat follows it
+  const themeMode = forcedTheme || (isPage ? 'auto' : w.theme)
+  function applyTheme() { root.classList.toggle('dark', themeMode === 'dark' || (themeMode === 'auto' && hostIsDark())) }
+  applyTheme()
+  if (themeMode === 'auto') {
+    // check again once the host's own colour transition (if any) has finished
+    let settle = null
+    const recheck = () => { applyTheme(); clearTimeout(settle); settle = setTimeout(applyTheme, 450) }
+    cleanups.push(() => clearTimeout(settle))
+    const mo = new MutationObserver(recheck)
+    for (const el of [document.documentElement, document.body]) if (el) mo.observe(el, { attributes: true, attributeFilter: ['class', 'style', ...THEME_ATTRS] })
+    cleanups.push(() => mo.disconnect())
+    const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null
+    if (mq?.addEventListener) { mq.addEventListener('change', recheck); cleanups.push(() => mq.removeEventListener('change', recheck)) }
+    on(window, 'sardesk-theme', recheck)
+    if (document.readyState !== 'complete') on(window, 'load', recheck, { once: true })
+  }
+
   // ---------------------------------------------------------------- open / close
   function setOpen(v, { focus = true } = {}) {
     if (isPage) return
@@ -331,7 +399,10 @@ export function mountChat(host, opts) {
   }
 
   // ---------------------------------------------------------------- menu
-  function openMenu() { endItem.disabled = !st.convId; menu.hidden = false; menuBtn.setAttribute('aria-expanded', 'true'); (menu.querySelector('button:not(:disabled)') || menuBtn).focus() }
+  function openMenu() {
+    endItem.disabled = !st.convId
+    if (themeMenu) { const cur = themeMenu.get(); menu.querySelectorAll('[data-theme]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.theme === cur))) }
+    menu.hidden = false; menuBtn.setAttribute('aria-expanded', 'true'); (menu.querySelector('button:not(:disabled)') || menuBtn).focus() }
   function closeMenu() { if (!menu.hidden) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false') } }
 
   // ---------------------------------------------------------------- conversation
@@ -525,7 +596,9 @@ export function mountChat(host, opts) {
   }
   on(menuBtn, 'click', (e) => { e.stopPropagation(); menu.hidden ? openMenu() : closeMenu() })
   on(menu, 'click', (e) => {
-    const act = e.target.closest('button')?.dataset.act
+    const btn = e.target.closest('button')
+    if (btn?.dataset.theme && themeMenu) { themeMenu.set(btn.dataset.theme); closeMenu(); menuBtn.focus(); return }
+    const act = btn?.dataset.act
     if (!act) return
     closeMenu()
     if (act === 'end') {

@@ -1,0 +1,134 @@
+/*
+ * Sardesk design tokens: the single source of colours, type, radii, shadows, spacing and motion.
+ * Light is the default; html[data-theme="dark"] is set by src/lib/theme.js (and by the inline script in index.html
+ * before first paint) from the user's choice: light / dark / auto (= operating system).
+ *
+ * Palette, light ("giorno"):  Mare #0F5A7F · Granito #F2F3EF / #DEE1DA · Inchiostro #10232F · Mirto #2F6B4A
+ *                             Zafferano #9A620E · Corallo #D9472F (sparingly: logo light, alerts, danger)
+ * Palette, dark ("notte di mare"): Fondale #0A1922 · Acqua #4DB6D0 · Corallo #F07A62 · Mirto #74B990
+ */
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --bg: #F2F3EF;              /* granito chiaro: page background */
+  --surface: #FFFFFF;         /* cards, panels */
+  --surfaceAlt: #F6F7F4;      /* sunken areas: table headers, inputs groups, hover rows */
+  --surfaceRaised: #FFFFFF;   /* menus, modals */
+  --border: #E0E3DC;
+  --borderStrong: #C8CDC4;
+
+  /* text */
+  --text: #10232F;            /* inchiostro di mare */
+  --textSecondary: #4C5A61;
+  --textMuted: #7A858A;
+
+  /* brand */
+  --primary: #0F5A7F;         /* mare profondo */
+  --primaryHover: #0B4867;
+  --onPrimary: #FFFFFF;
+  --primaryLight: rgba(15, 90, 127, 0.07);
+  --primaryBorder: rgba(15, 90, 127, 0.22);
+  --accent: #D9472F;          /* corallo: used sparingly */
+  --accentSoft: rgba(217, 71, 47, 0.09);
+
+  /* status */
+  --green: #2F6B4A;           /* mirto */
+  --greenSoft: rgba(47, 107, 74, 0.10);
+  --yellow: #9A620E;          /* zafferano */
+  --yellowSoft: rgba(154, 98, 14, 0.10);
+  --danger: #B93A2B;
+  --dangerSoft: rgba(185, 58, 43, 0.08);
+  --dangerBorder: rgba(185, 58, 43, 0.28);
+
+  /* data */
+  --chart: #1A6E9E;
+  --chartGrid: #E7E9E4;
+
+  /* focus */
+  --focus: 0 0 0 3px rgba(15, 90, 127, 0.28);
+
+  /* type */
+  --font-display: 'Bricolage Grotesque', 'Instrument Sans', system-ui, sans-serif;
+  --font-ui: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-h3: 18px;
+  --fs-h2: 23px;
+  --fs-h1: 32px;
+  --fs-hero: 52px;
+
+  /* shape (radius follows hierarchy: big containers rounder, small controls tighter) */
+  --r-card: 16px;
+  --r-section: 12px;
+  --r-btn: 10px;
+  --r-input: 10px;
+  --r-badge: 7px;
+  --r-pill: 999px;
+
+  /* elevation: tinted with the sea ink, never neutral grey */
+  --shadow-1: 0 1px 2px rgba(16, 35, 47, 0.05), 0 1px 1px rgba(16, 35, 47, 0.03);
+  --shadow-2: 0 6px 20px -8px rgba(16, 35, 47, 0.18), 0 2px 6px -2px rgba(16, 35, 47, 0.08);
+  --shadow-3: 0 24px 60px -20px rgba(10, 30, 45, 0.35), 0 8px 20px -10px rgba(10, 30, 45, 0.18);
+
+  /* spacing scale */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --t-fast: 0.14s;
+  --t-med: 0.24s;
+
+  --backdrop: rgba(12, 28, 38, 0.42);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0A1922;              /* fondale */
+  --surface: #0F2230;
+  --surfaceAlt: #0C1D29;
+  --surfaceRaised: #15303F;
+  --border: #1D3646;
+  --borderStrong: #2A4859;
+
+  --text: #E5ECEE;
+  --textSecondary: #A2B2B8;
+  --textMuted: #6F838B;
+
+  --primary: #4DB6D0;         /* acqua di cala */
+  --primaryHover: #6CC6DC;
+  --onPrimary: #05222E;
+  --primaryLight: rgba(77, 182, 208, 0.10);
+  --primaryBorder: rgba(77, 182, 208, 0.30);
+  --accent: #F07A62;
+  --accentSoft: rgba(240, 122, 98, 0.12);
+
+  --green: #74B990;
+  --greenSoft: rgba(116, 185, 144, 0.12);
+  --yellow: #E2AA4E;
+  --yellowSoft: rgba(226, 170, 78, 0.12);
+  --danger: #F07A62;
+  --dangerSoft: rgba(240, 122, 98, 0.10);
+  --dangerBorder: rgba(240, 122, 98, 0.34);
+
+  --chart: #3AA2BF;
+  --chartGrid: #1A3241;
+
+  --focus: 0 0 0 3px rgba(77, 182, 208, 0.35);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 10px 28px -12px rgba(0, 0, 0, 0.6), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 30px 70px -24px rgba(0, 0, 0, 0.75), 0 10px 24px -12px rgba(0, 0, 0, 0.5);
+
+  --backdrop: rgba(2, 10, 15, 0.62);
+}

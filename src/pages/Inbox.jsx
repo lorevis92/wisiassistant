@@ -2,9 +2,11 @@ import InboxView from '../components/InboxView'
 export default function Inbox() {
   return (
     <div className="page">
-      <div style={{ marginBottom: 16 }}>
-        <h1>Inbox</h1>
-        <div className="secondary small" style={{ marginTop: 4 }}>Conversazioni di tutti i clienti in escalation o prese in carico da un operatore.</div>
+      <div className="page-head">
+        <div>
+          <h1>Inbox</h1>
+          <p className="lead" style={{ margin: '6px 0 0' }}>Le conversazioni di tutti i clienti passate a un operatore o prese in carico.</p>
+        </div>
       </div>
       <InboxView />
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fmtDateTime } from '../../lib/utils'
+import { EmptyState } from '../../components/ui'
 
 export default function Leads({ client }) {
   const [leads, setLeads] = useState(null)
@@ -15,18 +16,19 @@ export default function Leads({ client }) {
   }
 
   return (
-    <div className="card" style={{ padding: 0 }}>
-      <div className="row between" style={{ padding: 12 }}>
-        <span className="section-label">{leads?.length || 0} lead raccolti dal bot</span>
+    <div className="card flush">
+      <div className="pane-head">
+        <span className="section-label">{leads?.length || 0} lead raccolti dall’assistente</span>
         <button className="btn sm" onClick={exportCsv} disabled={!leads?.length}>Esporta CSV</button>
       </div>
+      {leads?.length === 0 ? <EmptyState icon="people" title="Nessun lead raccolto">Per chiedere nome ed email prima della chat, attiva la raccolta lead in Impostazioni.</EmptyState> : (
       <table className="table">
         <thead><tr><th>Nome</th><th>Email</th><th>Telefono</th><th>Canale</th><th>Data</th></tr></thead>
         <tbody>
-          {leads?.length === 0 && <tr><td colSpan={5} className="empty">Nessun lead. Attiva la raccolta in Impostazioni → Widget.</td></tr>}
           {leads?.map((l) => <tr key={l.id}><td>{l.name}</td><td className="mono">{l.email}</td><td className="mono">{l.phone}</td><td><span className="badge">{l.channel}</span></td><td className="mono small">{fmtDateTime(l.created_at)}</td></tr>)}
         </tbody>
       </table>
+      )}
     </div>
   )
 }

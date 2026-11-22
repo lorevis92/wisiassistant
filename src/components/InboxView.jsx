@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase, callFunction } from '../lib/supabase'
-import { StatusBadge, Toast, useToast } from './ui'
+import { StatusBadge, Toast, useToast, EmptyState, Spinner } from './ui'
 import ChatThread from './ChatThread'
 import { fmtDateTime } from '../lib/utils'
 
@@ -64,50 +64,52 @@ export default function InboxView({ clientId = null }) {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16 }}>
+    <div className="split">
       <Toast msg={toast} />
-      <div className="card" style={{ padding: 0, maxHeight: 680, overflow: 'auto' }}>
-        <div className="row between" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-          <span className="section-label">Da gestire</span>
-          <label className="small secondary row" style={{ gap: 4 }}><input type="checkbox" className="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />risolte</label>
+      <div className="pane" style={{ maxHeight: 700 }}>
+        <div className="pane-head">
+          <span className="section-label">Da gestire{list?.length ? ` (${list.length})` : ''}</span>
+          <label className="small secondary row" style={{ gap: 6, cursor: 'pointer' }}><input type="checkbox" className="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />Mostra risolte</label>
         </div>
-        {list === null && <div className="empty">Caricamento…</div>}
-        {list?.length === 0 && <div className="empty">Nessuna conversazione in attesa 🎉</div>}
-        {list?.map((c) => (
-          <div key={c.id} onClick={() => setActive(c.id)} style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: active === c.id ? 'var(--primaryLight)' : '#fff' }}>
-            <div className="row between">
-              <span className="small" style={{ fontWeight: 700 }}>{!clientId && clients[c.client_id] ? `${clients[c.client_id]} · ` : ''}{c.lead_name || c.visitor_label || `Visitatore ${c.id.slice(0, 6)}`}</span>
-              <StatusBadge status={c.status} />
-            </div>
-            <div className="small secondary truncate" style={{ maxWidth: 300, marginTop: 3 }}>{c.last_message || ''}</div>
-            <div className="row between" style={{ marginTop: 4 }}><span className="badge">{c.channel}</span><span className="mono small muted">{fmtDateTime(c.updated_at)}</span></div>
-          </div>
-        ))}
+        <div className="pane-scroll">
+          {list === null && <Spinner />}
+          {list?.length === 0 && <EmptyState icon="inbox" title="Nessuna conversazione in attesa">Quando una conversazione passa a un operatore la trovi qui.</EmptyState>}
+          {list?.map((c) => (
+            <button type="button" key={c.id} className={`list-item${active === c.id ? ' active' : ''}`} onClick={() => setActive(c.id)} aria-current={active === c.id ? 'true' : undefined}>
+              <div className="row between" style={{ gap: 8 }}>
+                <span className="who">{!clientId && clients[c.client_id] ? <span className="secondary">{clients[c.client_id]} / </span> : ''}{c.lead_name || c.visitor_label || `Visitatore ${c.id.slice(0, 6)}`}</span>
+                <StatusBadge status={c.status} />
+              </div>
+              <div className="preview">{c.last_message || ''}</div>
+              <div className="meta"><span>{c.channel}</span><span>{fmtDateTime(c.updated_at)}</span></div>
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', maxHeight: 680 }}>
+      <div className="pane" style={{ height: 700, maxHeight: '80vh' }}>
         {current ? (
           <>
-            <div className="row between" style={{ marginBottom: 12 }}>
-              <div>
-                <div style={{ fontWeight: 700 }}>{current.lead_name || current.visitor_label || `Visitatore ${current.id.slice(0, 6)}`}</div>
-                <div className="small secondary mono">{[current.lead_email, current.channel, current.escalation_reason].filter(Boolean).join(' · ')}</div>
+            <div className="thread-head">
+              <div style={{ minWidth: 0 }}>
+                <h3>{current.lead_name || current.visitor_label || `Visitatore ${current.id.slice(0, 6)}`}</h3>
+                <div className="small secondary" style={{ marginTop: 4 }}>{[current.lead_email, current.channel, current.escalation_reason].filter(Boolean).join(', ')}</div>
               </div>
-              <div className="row">
+              <div className="row wrap" style={{ gap: 6 }}>
                 {current.status === 'escalated' && <button className="btn sm primary" onClick={takeOver}>Prendi in carico</button>}
                 {current.status === 'human' && <button className="btn sm" onClick={giveBack}>Restituisci al bot</button>}
-                {current.status !== 'resolved' && <button className="btn sm" onClick={resolve}>Risolta</button>}
+                {current.status !== 'resolved' && <button className="btn sm" onClick={resolve}>Segna risolta</button>}
               </div>
             </div>
-            <div style={{ flex: 1, overflow: 'auto', paddingRight: 4 }}>
+            <div className="thread-body">
               <ChatThread messages={messages} />
               <div ref={bottom} />
             </div>
-            <form onSubmit={send} className="row" style={{ marginTop: 12 }}>
-              <input className="input" placeholder="Scrivi come operatore…" value={text} onChange={(e) => setText(e.target.value)} />
-              <button className="btn primary">Invia</button>
+            <form onSubmit={send} className="thread-compose">
+              <input className="input" aria-label="Risposta dell’operatore" placeholder="Scrivi come operatore…" value={text} onChange={(e) => setText(e.target.value)} />
+              <button className="btn primary" disabled={!text.trim()}>Invia</button>
             </form>
           </>
-        ) : <div className="empty">Seleziona una conversazione</div>}
+        ) : <EmptyState icon="chat" title="Seleziona una conversazione">Scegli una conversazione dall’elenco per leggerla e rispondere.</EmptyState>}
       </div>
     </div>
   )

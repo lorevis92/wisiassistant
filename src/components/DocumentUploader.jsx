@@ -120,21 +120,22 @@ export default function DocumentUploader({ clientId, onUploaded }) {
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
         onDragEnter={dragIn} onDragOver={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
         onDragLeave={dragOut} onDrop={onDrop}
-        style={{
-          border: `2px dashed ${over ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 8, padding: '26px 16px', textAlign: 'center', cursor: 'pointer',
-          background: over ? 'var(--primaryBg, rgba(232,53,42,0.06))' : 'var(--surfaceAlt, #fafafa)', transition: 'border-color .15s, background .15s',
-        }}>
-        <div style={{ fontSize: 26, lineHeight: 1, marginBottom: 8 }} aria-hidden="true">{over ? '⬇' : '📄'}</div>
-        <div style={{ fontWeight: 600 }}>{over ? 'Rilascia i file per aggiungerli' : 'Trascina qui i documenti oppure clicca per sceglierli'}</div>
+        className={`dropzone${over ? ' over' : ''}`}>
+        <span className="glyph" aria-hidden="true">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            {over ? <path d="M12 4v12M7 11l5 5 5-5M5 20h14" /> : <path d="M12 16V4M7 9l5-5 5 5M5 20h14" />}
+          </svg>
+        </span>
+        <div style={{ fontWeight: 600 }}>{over ? 'Rilascia i file per aggiungerli' : 'Trascina qui i documenti o scegli i file'}</div>
         <div className="small secondary" style={{ marginTop: 4 }}>
-          {DOC_EXTENSIONS.map((e) => e.toUpperCase()).join(', ')} · massimo {DOC_MAX_MB} MB per file · più file insieme
+          {DOC_EXTENSIONS.map((e) => e.toUpperCase()).join(', ')}, fino a {DOC_MAX_MB} MB per file, anche più file insieme
         </div>
         <input ref={inputRef} type="file" multiple hidden accept={DOC_EXTENSIONS.map((e) => `.${e}`).join(',')}
           onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
       </div>
 
       {rejected.length > 0 && (
-        <div className="card tight" style={{ borderColor: 'var(--primary)' }} role="alert">
+        <div className="callout danger" role="alert">
           <div className="row between">
             <b className="small">{rejected.length === 1 ? '1 file scartato' : `${rejected.length} file scartati`}</b>
             <button type="button" className="btn sm ghost" onClick={() => setRejected([])}>Chiudi</button>
@@ -146,7 +147,7 @@ export default function DocumentUploader({ clientId, onUploaded }) {
       )}
 
       {items.length > 0 && (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 4 }}>
+        <div className="table-wrap">
           <table className="table">
             <thead><tr><th>File</th><th style={{ width: 90 }}>Dimensione</th><th style={{ width: 150 }}>Stato</th><th style={{ width: 40 }}></th></tr></thead>
             <tbody>
@@ -157,7 +158,7 @@ export default function DocumentUploader({ clientId, onUploaded }) {
                   <tr key={i.id}>
                     <td>
                       <span className="mono truncate" style={{ maxWidth: 420 }}>{i.file.name}</span>
-                      {i.error && <div className="small" style={{ color: 'var(--primary)' }}>{i.error}</div>}
+                      {i.error && <div className="small" style={{ color: 'var(--danger)' }}>{i.error}</div>}
                     </td>
                     <td className="mono small">{fmtSize(i.file.size)}</td>
                     <td>
@@ -180,7 +181,7 @@ export default function DocumentUploader({ clientId, onUploaded }) {
       {items.length > 0 && (
         <div className="row between wrap">
           <span className="small secondary" aria-live="polite">
-            {running ? `Caricamento in corso: ${finished}/${active} completati…` : `${items.length} file nell’elenco`}
+            {running ? `Caricamento in corso: ${finished} di ${active} completati…` : `${items.length} file nell’elenco`}
           </span>
           <div className="row wrap" style={{ gap: 6 }}>
             {!running && <button type="button" className="btn sm" onClick={() => { setItems([]); setSummary(null) }}>Svuota elenco</button>}
@@ -195,10 +196,10 @@ export default function DocumentUploader({ clientId, onUploaded }) {
       )}
 
       {summary && (
-        <div className="card tight" role="status" style={{ borderColor: summary.failed.length ? 'var(--primary)' : 'var(--green, #1a7f37)' }}>
+        <div className={`callout ${summary.failed.length ? 'danger' : 'ok'}`} role="status">
           <b className="small">
             {summary.ok} {summary.ok === 1 ? 'file caricato e indicizzato' : 'file caricati e indicizzati'}
-            {summary.failed.length ? ` · ${summary.failed.length} con errore` : ' · nessun errore'}
+            {summary.failed.length ? `, ${summary.failed.length} con errore` : ', nessun errore'}
           </b>
           {summary.failed.length > 0 && (
             <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18 }}>

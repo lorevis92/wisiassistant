@@ -15,7 +15,7 @@ export const AVATAR_PRESETS = [
   { id: 'bot', label: 'Robot' },
 ]
 
-export const DEFAULT_AVATAR = { kind: 'preset', preset: 'person', bg: '#E8352A', fg: '#FFFFFF', url: '' }
+export const DEFAULT_AVATAR = { kind: 'preset', preset: 'person', bg: '#0F5A7F', fg: '#FFFFFF', url: '' }
 
 /** Only plain hex colors reach CSS / SVG: anything else falls back (no injection through config values). */
 export function safeColor(c, fallback) {

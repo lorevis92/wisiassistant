@@ -1,6 +1,8 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { BRAND } from '../lib/brand'
+import { Logo, ThemeSwitch } from './Brand'
 
 export function Navbar() {
   const { session } = useAuth()
@@ -14,51 +16,43 @@ export function Navbar() {
   const isActive = (to) => (to === '/' ? loc.pathname === '/' || loc.pathname.startsWith('/clients') : loc.pathname.startsWith(to))
 
   return (
-    <div className="navbar">
+    <header className="navbar">
       <div className="navbar-inner">
-        <button className="hamburger" onClick={() => nav('/')} aria-label="menu">☰</button>
-        <Link to="/" className="brand">
-          <img src="/logo-wisiassistant.png" alt="WISI" onError={(e) => { e.currentTarget.style.display = 'none' }} />
-          <span className="name">Assistant</span>
-        </Link>
+        <Link to="/" aria-label={`${BRAND}, vai ai clienti`} style={{ display: 'inline-flex' }}><Logo /></Link>
         {session && (
-          <div className="tabs">
+          <nav className="mainnav" aria-label="Sezioni">
             {tabs.map((t) => (
-              <Link key={t.to} to={t.to} className={`tab ${isActive(t.to) ? 'active' : ''}`}>{t.label}</Link>
+              <NavLink key={t.to} to={t.to} className={() => (isActive(t.to) ? 'active' : '')} aria-current={isActive(t.to) ? 'page' : undefined}>{t.label}</NavLink>
             ))}
-          </div>
+          </nav>
         )}
         <div className="nav-right">
-          {session ? (
-            <button className="btn ghost" onClick={async () => { await supabase.auth.signOut(); nav('/login') }}>Sign out</button>
-          ) : (
-            <Link to="/login" className="btn primary">Sign in</Link>
+          <ThemeSwitch />
+          {session && (
+            <button className="btn ghost sm" onClick={async () => { await supabase.auth.signOut(); nav('/login') }}>Esci</button>
           )}
         </div>
       </div>
-    </div>
+    </header>
   )
 }
 
 export function Footer() {
   return (
-    <div className="footer">
+    <footer className="footer">
       <div className="footer-inner">
-        <div className="row">
-          <img src="/logo-wisiverse.png" alt="WiSiVERSE" onError={(e) => { e.currentTarget.style.display = 'none' }} />
-          <span className="note">Part of the WiSiVERSE ecosystem</span>
-        </div>
-        <a className="link" href="https://wisiverse.com" target="_blank" rel="noopener">wisiverse.com →</a>
+        <span>© {new Date().getFullYear()} {BRAND}</span>
       </div>
-    </div>
+    </footer>
   )
 }
 
-export function Shell({ children }) {
+export function Shell({ children, bare = false }) {
+  if (bare) return children
   return (
     <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <Navbar />
-      <div style={{ flex: 1 }}>{children}</div>
+      <main style={{ flex: 1 }}>{children}</main>
       <Footer />
     </div>
   )

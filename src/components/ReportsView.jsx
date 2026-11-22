@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, callFunction } from '../lib/supabase'
-import { StatusBadge, Toast, useToast, Modal } from './ui'
+import { StatusBadge, Toast, useToast, Modal, EmptyState } from './ui'
 import { fmtDate, fmtDateTime, daysAgo, todayIso } from '../lib/utils'
 
 /**
@@ -45,19 +45,22 @@ export default function ReportsView({ client = null }) {
     <div className="col" style={{ gap: 16 }}>
       <Toast msg={toast} />
       {client && (
-        <div className="card tight row between">
-          <div className="small secondary">
-            Cadenza: <b>{client.report_frequency || 'nessuna'}</b> · destinatari: <span className="mono">{(client.report_recipients || []).join(', ') || '—'}</span> · {client.report_auto_send ? 'invio automatico' : 'richiede approvazione'} · modifica in Impostazioni → Report
-          </div>
+        <div className="card tight row between wrap">
+          <dl className="report-kv">
+            <div><dt>Cadenza</dt><dd>{{ weekly: 'Settimanale', biweekly: 'Ogni 2 settimane', monthly: 'Mensile' }[client.report_frequency] || 'Nessuna'}</dd></div>
+            <div><dt>Destinatari</dt><dd className="mono">{(client.report_recipients || []).join(', ') || '–'}</dd></div>
+            <div><dt>Invio</dt><dd>{client.report_auto_send ? 'Automatico' : 'Dopo la tua approvazione'}</dd></div>
+          </dl>
+          <style>{`.report-kv{display:flex;flex-wrap:wrap;gap:8px 28px;margin:0;font-size:var(--fs-sm)}.report-kv dt{color:var(--textMuted);font-size:var(--fs-xs)}.report-kv dd{margin:2px 0 0;font-weight:500}`}</style>
           <button className="btn primary" onClick={() => setGenOpen(true)}>Genera report ora</button>
         </div>
       )}
-      <div className="card" style={{ padding: 0 }}>
+      <div className="card flush">
+        {reports?.length === 0 ? <EmptyState icon="chart" title="Nessun report ancora">I report arrivano qui come bozze secondo la cadenza scelta in Impostazioni{client ? ', oppure generane uno adesso.' : '.'}</EmptyState> : (
         <table className="table">
           <thead><tr>{!client && <th>Cliente</th>}<th>Periodo</th><th>Oggetto</th><th>Stato</th><th>Creato</th><th>Inviato</th><th></th></tr></thead>
           <tbody>
             {reports === null && <tr><td colSpan={7} className="empty">Caricamento…</td></tr>}
-            {reports?.length === 0 && <tr><td colSpan={7} className="empty">Nessun report ancora</td></tr>}
             {reports?.map((r) => (
               <tr key={r.id}>
                 {!client && <td>{clients[r.client_id]}</td>}
@@ -66,14 +69,17 @@ export default function ReportsView({ client = null }) {
                 <td><StatusBadge status={r.status} /></td>
                 <td className="mono small">{fmtDateTime(r.created_at)}</td>
                 <td className="mono small">{fmtDateTime(r.sent_at)}</td>
-                <td className="row" style={{ justifyContent: 'flex-end' }}>
-                  <button className="btn sm" onClick={() => setEdit(r)}>{r.status === 'sent' ? 'Vedi' : 'Modifica / invia'}</button>
-                  <button className="btn sm danger" onClick={() => del(r.id)}>✕</button>
+                <td>
+                  <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                    <button className="btn sm" onClick={() => setEdit(r)}>{r.status === 'sent' ? 'Apri' : 'Rivedi e invia'}</button>
+                    <button className="btn sm danger" aria-label="Elimina il report" title="Elimina" onClick={() => del(r.id)}>Elimina</button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       <Modal open={genOpen} title="Genera report" onClose={() => setGenOpen(false)}>

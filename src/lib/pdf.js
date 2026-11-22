@@ -26,7 +26,7 @@ export async function exportConversationsPdf({ clientName, from, to, conversatio
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16)
   doc.text(safe(`${clientName} - Conversazioni`), M, y); y += 20
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(102)
-  doc.text(safe(`Periodo: ${from} -> ${to} · ${conversations.length} conversazioni · generato il ${fmtDateTime(new Date())}`), M, y); y += 24
+  doc.text(safe(`Periodo: ${from} -> ${to} · ${conversations.length} conversazioni · generato con Sardesk il ${fmtDateTime(new Date())}`), M, y); y += 24
   doc.setTextColor(17)
 
   for (const c of conversations) {
@@ -47,7 +47,8 @@ export async function exportConversationsPdf({ clientName, from, to, conversatio
       const bh = lines.length * 12 + 22
       ensure(bh + 6)
       const x = isUser ? W - M - bw : M
-      if (isUser) { doc.setFillColor(232, 53, 42); doc.setTextColor(255) } else if (m.role === 'human') { doc.setFillColor(255, 255, 255); doc.setDrawColor(232, 53, 42); doc.setTextColor(17) } else { doc.setFillColor(248, 248, 248); doc.setDrawColor(232); doc.setTextColor(17) }
+      // Sardesk palette: mare (user), corallo outline (operator), granito (assistant)
+      if (isUser) { doc.setFillColor(15, 90, 127); doc.setTextColor(255) } else if (m.role === 'human') { doc.setFillColor(255, 255, 255); doc.setDrawColor(217, 71, 47); doc.setTextColor(16, 35, 47) } else { doc.setFillColor(242, 243, 239); doc.setDrawColor(224, 227, 220); doc.setTextColor(16, 35, 47) }
       doc.roundedRect(x, y, bw, bh, 5, 5, isUser ? 'F' : 'FD')
       doc.text(lines, x + 8, y + 14)
       doc.setFontSize(7); doc.setTextColor(isUser ? 255 : 170)

@@ -1,5 +1,5 @@
 /**
- * WISI Assistant embeddable widget.
+ * Sardesk embeddable widget.
  * Usage on the client's site:
  *   <script src="https://YOUR-DOMAIN/widget.js" data-client="CLIENT_SLUG" async></script>
  * Optional: data-supabase-url / data-anon-key override the values baked in at build time.
@@ -10,12 +10,13 @@
 import { makeApi, mountChat } from './chat-ui.js'
 
 ;(function () {
+  // technical names (global flag, host id) are kept from the first version: client sites may rely on them
   if (window.__wisiAssistantLoaded) return
   window.__wisiAssistantLoaded = true
 
   const script = document.currentScript || Array.from(document.scripts).find((s) => (s.src || '').includes('widget.js'))
   const slug = script?.dataset.client
-  if (!slug) return console.warn('[WISI Assistant] data-client mancante')
+  if (!slug) return console.warn('[Sardesk] data-client mancante')
 
   const SUPABASE_URL = script.dataset.supabaseUrl || __WA_SUPABASE_URL__
   const ANON = script.dataset.anonKey || __WA_ANON_KEY__
@@ -23,10 +24,10 @@ import { makeApi, mountChat } from './chat-ui.js'
 
   async function init() {
     let cfg
-    if (!SUPABASE_URL || !ANON) return console.warn('[WISI Assistant] configurazione di build mancante (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    if (!SUPABASE_URL || !ANON) return console.warn('[Sardesk] configurazione di build mancante (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
     try { cfg = await api({ mode: 'config', client_slug: slug, channel: 'web', origin: location.hostname }) } catch (e) {
       const hint = e.status === 403 && /dominio/i.test(e.message) ? ` - aggiungi "${location.hostname}" ai domini autorizzati del cliente` : ''
-      return console.warn(`[WISI Assistant] widget non mostrato (${e.status || 'rete'}): ${e.message}${hint}`)
+      return console.warn(`[Sardesk] widget non mostrato (${e.status || 'rete'}): ${e.message}${hint}`)
     }
     if (!document.body) await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }))
     const host = document.createElement('div')

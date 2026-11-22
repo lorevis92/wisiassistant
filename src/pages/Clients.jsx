@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Modal, StatusBadge, Toast, useToast, Stat } from '../components/ui'
+import { Modal, StatusBadge, Toast, useToast, Stat, EmptyState } from '../components/ui'
 import { fmtDate, slugify } from '../lib/utils'
 import { DEFAULT_MODEL, modelLabel } from '../lib/models'
 
@@ -44,22 +44,30 @@ export default function Clients() {
   return (
     <div className="page">
       <Toast msg={toast} />
-      <div className="row between" style={{ marginBottom: 20 }}>
+      <div className="page-head">
         <div>
           <h1>Clienti</h1>
-          <div className="secondary small" style={{ marginTop: 4 }}>Ogni cliente ha la propria knowledge base, modello AI e canali.</div>
+          <p className="lead" style={{ margin: '6px 0 0' }}>Ogni cliente ha la propria knowledge base, il proprio modello AI e i propri canali.</p>
         </div>
-        <button className="btn primary" onClick={() => setOpen(true)}>+ Nuovo cliente</button>
+        <button className="btn primary" onClick={() => setOpen(true)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          Nuovo cliente
+        </button>
       </div>
 
-      <div className="grid4" style={{ marginBottom: 20 }}>
+      <div className="grid4" style={{ marginBottom: 24 }}>
         <Stat k="Clienti" v={total} />
         <Stat k="Bot attivi" v={ready} />
         <Stat k="Conversazioni 30gg" v={convs} />
         <Stat k="Escalation aperte" v={openEsc} />
       </div>
 
-      <div className="card" style={{ padding: 0 }}>
+      <div className="card flush">
+        {clients?.length === 0 ? (
+          <EmptyState icon="people" title="Ancora nessun cliente" action={<button className="btn primary" onClick={() => setOpen(true)}>Crea il primo cliente</button>}>
+            Crea un cliente, mappa il suo sito e in pochi minuti l’assistente è pronto da incollare nel sito.
+          </EmptyState>
+        ) : (
         <table className="table">
           <thead>
             <tr>
@@ -68,24 +76,24 @@ export default function Clients() {
           </thead>
           <tbody>
             {clients === null && <tr><td colSpan={8} className="empty">Caricamento…</td></tr>}
-            {clients?.length === 0 && <tr><td colSpan={8} className="empty">Nessun cliente. Crea il primo.</td></tr>}
             {clients?.map((c) => {
               const s = stats[c.id] || {}
               return (
                 <tr key={c.id}>
-                  <td><Link to={`/clients/${c.id}`} style={{ color: 'var(--text)', fontWeight: 700 }}>{c.name}</Link></td>
+                  <td><Link to={`/clients/${c.id}`} style={{ color: 'var(--text)', fontWeight: 600 }}>{c.name}</Link></td>
                   <td className="mono"><span className="truncate" style={{ maxWidth: 220 }}>{c.domain?.replace(/^https?:\/\//, '')}</span></td>
                   <td><StatusBadge status={c.status} /></td>
                   <td className="mono">{s.pages_indexed || 0}</td>
                   <td>{modelLabel(c.model)}</td>
                   <td className="mono">{s.conversations_30d || 0}</td>
-                  <td>{(c.channels || ['web']).map((ch) => <span key={ch} className="badge" style={{ marginRight: 4 }}>{ch}</span>)}</td>
+                  <td><span className="row" style={{ gap: 4, flexWrap: 'wrap' }}>{(c.channels || ['web']).map((ch) => <span key={ch} className="badge">{ch}</span>)}</span></td>
                   <td className="mono">{fmtDate(c.created_at)}</td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+        )}
       </div>
 
       <Modal open={open} title="Nuovo cliente" onClose={() => setOpen(false)}>
@@ -97,16 +105,16 @@ export default function Clients() {
           <div className="field">
             <label className="label">Sito web</label>
             <input className="input" placeholder="https://www.esempio.ch" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} />
-            <div className="hint">Il dominio viene usato per il crawling e per autorizzare il widget. Puoi aggiungerne altri dopo.</div>
+            <div className="hint">Il sito da cui l’assistente impara. Puoi aggiungere altri domini dopo.</div>
           </div>
           <div className="field">
             <label className="label">Slug (URL pagina standalone)</label>
             <input className="input mono" value={form.slug} onChange={(e) => setForm({ ...form, slug: slugify(e.target.value) })} required />
             <div className="hint">La chat sarà raggiungibile su /c/{form.slug || 'slug'}</div>
           </div>
-          <div className="row" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="btn" onClick={() => setOpen(false)}>Annulla</button>
-            <button className="btn primary">Crea e vai al crawling</button>
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+            <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Annulla</button>
+            <button className="btn primary">Crea e mappa il sito</button>
           </div>
         </form>
       </Modal>

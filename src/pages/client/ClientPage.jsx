@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom'
+import { standaloneUrl, BRAND } from '../../lib/brand'
 import { supabase } from '../../lib/supabase'
-import { StatusBadge } from '../../components/ui'
+import { StatusBadge, Spinner } from '../../components/ui'
 import Overview from './Overview'
 import Crawling from './Crawling'
 import Knowledge from './Knowledge'
@@ -31,6 +32,7 @@ export default function ClientPage() {
     setClient(data)
   }
   useEffect(() => { reload() }, [id])
+  useEffect(() => { if (client?.name) document.title = `${client.name} · ${BRAND}`; return () => { document.title = BRAND } }, [client?.name])
 
   useEffect(() => {
     const ch = supabase.channel(`client-${id}`)
@@ -39,26 +41,27 @@ export default function ClientPage() {
     return () => { supabase.removeChannel(ch) }
   }, [id])
 
-  if (!client) return <div className="empty">Caricamento…</div>
+  if (!client) return <Spinner />
 
   return (
     <div className="page">
-      <div className="row between wrap" style={{ marginBottom: 16 }}>
-        <div>
-          <div className="small secondary"><Link to="/" style={{ color: 'var(--textSecondary)' }}>Clienti</Link> / {client.name}</div>
-          <div className="row" style={{ marginTop: 4 }}>
+      <div className="page-head" style={{ marginBottom: 18 }}>
+        <div style={{ minWidth: 0 }}>
+          <nav className="crumbs" aria-label="Percorso"><Link to="/">Clienti</Link> <span aria-hidden="true">/</span> {client.name}</nav>
+          <div className="row wrap" style={{ gap: 12 }}>
             <h1>{client.name}</h1>
             <StatusBadge status={client.status} />
           </div>
-          <div className="mono small secondary" style={{ marginTop: 4 }}>{client.domain}</div>
+          {client.domain && <a className="mono small" href={client.domain} target="_blank" rel="noopener" style={{ color: 'var(--textSecondary)', display: 'inline-block', marginTop: 6 }}>{client.domain.replace(/^https?:\/\//, '')}</a>}
         </div>
-        <div className="row">
-          <a className="btn" href={`/c/${client.slug}`} target="_blank" rel="noopener">Apri chat ↗</a>
-        </div>
+        <a className="btn" href={standaloneUrl(client.slug)} target="_blank" rel="noopener">
+          Apri la chat
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
+        </a>
       </div>
 
       {client.last_recrawl_status === 'error' && (
-        <div className="card tight row between wrap" style={{ marginBottom: 16, borderColor: 'var(--primary)' }}>
+        <div className="callout danger row between wrap" style={{ marginBottom: 16 }}>
           <span className="small">
             <StatusBadge status="failed" /> <b>Re-crawl automatico fallito</b>{client.last_recrawl_at ? ` il ${new Date(client.last_recrawl_at).toLocaleString('it-CH')}` : ''}: {client.last_recrawl_error || 'errore sconosciuto'}
             <span className="secondary"> · Il bot continua a usare i contenuti indicizzati in precedenza.</span>
@@ -67,11 +70,11 @@ export default function ClientPage() {
         </div>
       )}
 
-      <div className="tabs" style={{ marginBottom: 20, flexWrap: 'wrap' }}>
+      <nav className="subnav" aria-label="Sezioni del cliente">
         {TABS.map(([path, label]) => (
-          <NavLink key={path} to={`/clients/${id}/${path}`} end={path === ''} className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>{label}</NavLink>
+          <NavLink key={path} to={`/clients/${id}/${path}`} end={path === ''} className={({ isActive }) => (isActive ? 'active' : '')}>{label}</NavLink>
         ))}
-      </div>
+      </nav>
 
       <Routes>
         <Route index element={<Overview client={client} />} />

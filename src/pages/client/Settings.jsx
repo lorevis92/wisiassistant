@@ -24,7 +24,7 @@ export default function Settings({ client, reload }) {
     channels: client.channels || ['web', 'standalone'],
     allowed_domains: (client.allowed_domains || []).join('\n'),
     widget: {
-      color: '#E8352A', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'],
+      color: '#0F5A7F', title: 'Assistente', welcome: 'Ciao! Come posso aiutarti?', suggestions: [], position: 'right', avatar_url: '', lead_capture: 'off', lead_fields: ['name', 'email'],
       teaser_text: 'Ciao! Hai bisogno di aiuto?', teaser_delay: 0, disclaimer: DEFAULT_DISCLAIMER, human_handoff: false,
       ...(client.widget || {}),
       avatar: resolveAvatar(client.widget),
@@ -84,7 +84,7 @@ export default function Settings({ client, reload }) {
     <div className="col" style={{ gap: 16 }}>
       <Toast msg={toast} />
       <div className="sticky-actions row between">
-        <span className="section-label">Impostazioni cliente</span>
+        <h2 style={{ fontSize: 'var(--fs-h3)' }}>Impostazioni</h2>
         <div className="row">
           <select className="select" style={{ width: 140 }} value={f.status} onChange={(e) => set('status', e.target.value)}>
             <option value="ready">Attivo</option><option value="paused">In pausa</option><option value="new">Nuovo</option>
@@ -142,7 +142,7 @@ export default function Settings({ client, reload }) {
         <textarea className="textarea" style={{ minHeight: 200 }} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} />
         <div className="hint">Tono, regole, cose da non dire, come usare i link, contatti ufficiali della struttura (telefono, email, orari). Le informazioni di contesto (pagine, FAQ, documenti) vengono aggiunte automaticamente con URL e sezione di ogni frammento. Le regole di base su contatti e operatori valgono per tutti i clienti e prevalgono su queste istruzioni.</div>
         {conflicts.length > 0 && (
-          <div className="card tight" style={{ marginTop: 10, borderColor: 'var(--yellow, #B87000)' }} role="note">
+          <div className="callout warn" style={{ marginTop: 10 }} role="note">
             <div className="small"><b>⚠ {conflicts.length === 1 ? 'Una frase contraddice' : `${conflicts.length} frasi contraddicono`} le regole di base</b> {handoff ? '' : '(passaggio a operatore spento)'}: verrà ignorata, ma è meglio toglierla o riscriverla.</div>
             <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
               {conflicts.map((c, i) => <li key={i}>“{c.sentence}” <span className="secondary">— {c.reason}</span></li>)}
@@ -162,7 +162,7 @@ export default function Settings({ client, reload }) {
               <option value="after" disabled={!handoff}>Dopo il primo scambio{handoff ? '' : ' (richiede passaggio a operatore)'}</option>
             </select>
             <div className="hint">{handoff ? 'Il modulo chiede nome ed email al visitatore.' : 'Con il passaggio a operatore spento, l’assistente non chiede mai i contatti di sua iniziativa: resta solo il modulo facoltativo prima della chat.'}</div>
-            {!handoff && ['after', 'escalation'].includes(f.widget.lead_capture) && <div className="hint" style={{ color: 'var(--primary)' }}>L’opzione salvata non è attiva finché il passaggio a operatore è spento.</div>}
+            {!handoff && ['after', 'escalation'].includes(f.widget.lead_capture) && <div className="hint" style={{ color: 'var(--danger)' }}>L’opzione salvata non è attiva finché il passaggio a operatore è spento.</div>}
           </div>
           <div className="field"><label className="label">Domini autorizzati (uno per riga)</label><textarea className="textarea mono" style={{ minHeight: 70 }} value={f.allowed_domains} onChange={(e) => set('allowed_domains', e.target.value)} />
             <div className="hint">Lascia vuoto per far funzionare il widget su qualsiasi sito. Aggiungi domini solo se vuoi limitarlo a quei siti. Localhost e file:// sono sempre ammessi per i test.</div></div>
@@ -200,7 +200,7 @@ export default function Settings({ client, reload }) {
               </span>
               <button className="btn sm" disabled={!client.domain} onClick={recrawlNow}>Esegui ora</button>
             </div>
-            {client.last_recrawl_status === 'error' && client.last_recrawl_error && <div className="hint" style={{ color: 'var(--primary)' }}>{client.last_recrawl_error}</div>}
+            {client.last_recrawl_status === 'error' && client.last_recrawl_error && <div className="hint" style={{ color: 'var(--danger)' }}>{client.last_recrawl_error}</div>}
           </div>
           <div className="card">
             <div className="card-title">Report periodici</div>
