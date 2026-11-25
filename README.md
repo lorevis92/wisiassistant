@@ -162,6 +162,26 @@ SQL Editor → `supabase/migrations/0008_email_checks.sql` (idempotente) → `su
 **Tornare indietro**: esegui `supabase/migrations/0006_organizations_rollback.sql` (rimette l'accesso "solo wa_admins",
 non cancella dati) e ripubblica la versione precedente di funzioni e crawler. `wa_is_admin()` resta disponibile in entrambi i casi.
 
+## Qualità delle risposte (migrazione 0009)
+
+Pipeline: crawler (Crawl4AI, markdown **completo** della pagina, accordion/schede aperti, menu/footer/cookie esclusi) →
+chunking per sezioni (`crawler/chunking.py`, stesse regole in `_shared/common.ts` per i contenuti manuali: titolo pagina e
+sezione in ogni frammento, sezioni brevi collegate insieme, tabelle ed elenchi mai spezzati, leggera sovrapposizione) →
+embedding `text-embedding-3-small` → ricerca **ibrida** `wa_hybrid_search` (significato + parole chiave, fusi) con la domanda
+riscritta dalla chat → al modello la pagina fonte quasi intera + gli altri frammenti → regole di risposta
+(`ANSWER_RULES` in `_shared/policy.ts`) che **prevalgono** sulle istruzioni del cliente: prima le informazioni concrete,
+poi il link; mai il solo link.
+
+- **Perché ha risposto così** (Conversazioni e Inbox, owner/admin): domanda cercata, pagine passate per intero, frammenti
+  con somiglianza, parole chiave e se sono stati usati. Se i frammenti contengono la risposta ma la risposta no → modello o
+  prompt; se nessun frammento la contiene → dati (pagina non indicizzata o testo mancante: re-indicizza).
+- **Prova** (scheda del cliente): domande di prova con le informazioni attese e la pagina attesa; "Esegui tutte" usa la
+  stessa pipeline della chat (funzione `chat`, modo `test`) e controlla contenuto, link e "non solo link".
+- **Re-indicizzazione**: l'impronta delle pagine include la versione di estrazione e suddivisione, quindi il prossimo
+  crawl ri-elabora ogni pagina una volta. Impostazioni → Crawling → *Esegui ora* (rimappa e indicizza tutto secondo le
+  regole) oppure Crawling → Pagine indicizzate → *Seleziona visibili* → *Re-crawl*. I documenti caricati a mano vanno
+  ricaricati per avere la nuova suddivisione.
+
 ## Sviluppo locale
 ```bash
 npm install

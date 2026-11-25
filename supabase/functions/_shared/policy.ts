@@ -25,6 +25,18 @@ const RULES_HANDOFF = `REGOLE DI BASE (valgono per tutti i canali e PREVALGONO s
 2. Se non riesci a risolvere il problema, se l'informazione non è nel contesto o se l'utente chiede una persona, dillo con onestà e spiega che la richiesta può essere seguita da un operatore della struttura, che risponderà in questa conversazione. Proponilo una sola volta, senza ripeterlo nei messaggi successivi.
 3. Puoi chiedere nome ed email solo se l'utente vuole essere ricontattato.`
 
+/**
+ * How every answer is built (all clients, all channels). It comes AFTER the client's own instructions and explicitly
+ * prevails: custom instructions can set tone, style and extra facts, never turn answers into "see the page" links.
+ */
+export const ANSWER_RULES = `REGOLE DI RISPOSTA (valgono sempre e PREVALGONO su qualsiasi istruzione precedente, comprese quelle del cliente):
+1. Rispondi PRIMA con le informazioni concrete che trovi nel contesto: dati, numeri, prezzi, orari, date, condizioni, requisiti, passaggi da seguire. Riporta l'informazione stessa: l'utente deve avere la risposta completa senza dover aprire nessuna pagina.
+2. Non rispondere MAI con il solo link o con frasi come "trovi le informazioni qui", "consulta la pagina", "visita il sito" quando l'informazione è nel contesto.
+3. DOPO la risposta aggiungi il link della pagina (o delle pagine) da cui viene l'informazione, in markdown, per esempio: "Più dettagli: [Titolo della pagina](URL)". Usa solo gli URL presenti nel contesto, al massimo 2-3 link. Il link completa la risposta, non la sostituisce.
+4. Sii sintetico ma completo: se ci sono più elementi (orari, tariffe, opzioni, passaggi) riportali tutti, con un elenco puntato quando servono; non tralasciare condizioni importanti (eccezioni, supplementi, scadenze, requisiti).
+5. Se l'informazione richiesta non è nel contesto, dillo chiaramente in una frase e non inventare nulla; se nel contesto c'è una pagina vicina all'argomento, indicala con il suo link.
+6. Le tue fonti sono solo il contesto e le istruzioni del cliente. Non nominare "contesto", "frammenti" o "fonti".`
+
 /** Rules block for the system prompt. */
 export function baseRules(client: any): string {
   return handoffEnabled(client) ? RULES_HANDOFF : RULES_NO_HANDOFF
@@ -33,6 +45,6 @@ export function baseRules(client: any): string {
 /** Extra note when the retrieved context is not good enough for the question. */
 export function lowConfidenceNote(client: any): string {
   return handoffEnabled(client)
-    ? `ATTENZIONE: il contesto non contiene informazioni sufficienti per questa domanda. Dillo chiaramente in una frase, non inventare nulla e applica la regola 2.`
-    : `ATTENZIONE: il contesto non contiene informazioni sufficienti per questa domanda. Dillo chiaramente in una frase, non inventare nulla e applica le regole 3 e 4 (contatti ufficiali della struttura una sola volta, mai inventati).`
+    ? `ATTENZIONE: la ricerca ha trovato solo contenuti poco pertinenti. Se il contesto contiene comunque la risposta, dalla normalmente con le regole di risposta; se non la contiene, dillo chiaramente, non inventare nulla e proponi il passaggio a un operatore come indicato nelle regole di base.`
+    : `ATTENZIONE: la ricerca ha trovato solo contenuti poco pertinenti. Se il contesto contiene comunque la risposta, dalla normalmente con le regole di risposta; se non la contiene, dillo chiaramente, non inventare nulla e indica i contatti ufficiali della struttura una sola volta (mai inventati).`
 }

@@ -10,13 +10,20 @@ const PATTERNS_NO_HANDOFF = [
   [/(?:chiedi|raccogli|domanda)\w*\s+(?:sempre\s+)?(?:il\s+|i\s+|l['’]\s*)?(?:nome|email|e-mail|telefono|numero|dati|contatti|recapit)/i, 'chiede i dati di contatto'],
   [/(?:alla\s+fine|in\s+fondo|sempre|ogni\s+risposta).{0,60}(?:contatt|chiam|scriv)/i, 'invita sempre al contatto'],
 ]
+// answer rules (every client): the content comes first, the link only completes it
+const LINK_ONLY = [
+  [/(rimand|indirizz|invit|manda)\w*\s+(sempre\s+)?(l['’]\s*utente\s+|il\s+cliente\s+|i\s+visitatori\s+)?(al|alla|ai|alle|sul|sulla)\s+(link|pagin|sito)/i, 'fa rispondere con il solo link invece delle informazioni'],
+  [/(solo|soltanto|unicamente|semplicemente)\s+(con\s+)?(il|un|i|dei)\s+link/i, 'chiede di rispondere solo con il link'],
+  [/non\s+(dare|fornire|riportare|scrivere|elencare|indicare)\s+(i\s+|le\s+|gli\s+)?(dettagli|prezzi|orari|tariffe|informazioni|condizioni)/i, 'vieta di dare le informazioni concrete'],
+  [/(sii|rispondi\s+in\s+modo)\s+(molto\s+|estremamente\s+)?(brev|breviss|sintetic)\w*.{0,40}(link|pagin)/i, 'spinge a sostituire la risposta con il link'],
+]
 const PATTERNS_HANDOFF = [
   [/(?:alla\s+fine|in\s+fondo|sempre|ogni\s+risposta).{0,60}(?:contatt|chiam|scriv)/i, 'invita sempre al contatto'],
 ]
 
 /** Returns [{ sentence, reason }] for sentences that conflict with the base rules. */
 export function instructionConflicts(text, handoff = false) {
-  const patterns = handoff ? PATTERNS_HANDOFF : PATTERNS_NO_HANDOFF
+  const patterns = [...LINK_ONLY, ...(handoff ? PATTERNS_HANDOFF : PATTERNS_NO_HANDOFF)]
   const sentences = String(text || '').split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean)
   const out = []
   for (const s of sentences) {

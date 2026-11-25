@@ -10,7 +10,7 @@ import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS } from '../../li
 
 const DEFAULT_INSTRUCTIONS = `Sei l'assistente virtuale di {{nome}}. Rispondi in modo cortese, chiaro e conciso, nella lingua in cui scrive l'utente.
 Usa SOLO le informazioni fornite nel contesto (pagine del sito e documenti del cliente). Se la risposta non è nel contesto, dillo con onestà.
-Quando l'informazione proviene da una pagina del sito, includi il link alla pagina (e alla sezione, se disponibile) in modo naturale nella risposta, per aiutare l'utente a orientarsi nel sito.
+Dai sempre prima le informazioni concrete (orari, prezzi, condizioni, passaggi), poi aggiungi il link alla pagina da cui provengono.
 Non inventare prezzi, date o condizioni. Non promettere cose che non sono scritte nel contesto.`
 
 export default function Settings({ client, reload }) {
@@ -140,7 +140,7 @@ export default function Settings({ client, reload }) {
       <div className="card">
         <div className="card-title">Istruzioni per l’assistente (descrizione)</div>
         <textarea className="textarea" style={{ minHeight: 200 }} value={f.instructions} onChange={(e) => set('instructions', e.target.value)} />
-        <div className="hint">Tono, regole, cose da non dire, come usare i link, contatti ufficiali della struttura (telefono, email, orari). Le informazioni di contesto (pagine, FAQ, documenti) vengono aggiunte automaticamente con URL e sezione di ogni frammento. Le regole di base su contatti e operatori valgono per tutti i clienti e prevalgono su queste istruzioni.</div>
+        <div className="hint">Tono, regole, cose da non dire, come usare i link, contatti ufficiali della struttura (telefono, email, orari). Le informazioni di contesto (pagine, FAQ, documenti) vengono aggiunte automaticamente con URL e sezione di ogni frammento. Le regole di base valgono per tutti i clienti e prevalgono su queste istruzioni: l’assistente risponde sempre prima con le informazioni concrete e poi indica la pagina; non risponde mai con il solo link; non propone contatti od operatori se il passaggio a operatore è spento.</div>
         {conflicts.length > 0 && (
           <div className="callout warn" style={{ marginTop: 10 }} role="note">
             <div className="small"><b>⚠ {conflicts.length === 1 ? 'Una frase contraddice' : `${conflicts.length} frasi contraddicono`} le regole di base</b> {handoff ? '' : '(passaggio a operatore spento)'}: verrà ignorata, ma è meglio toglierla o riscriverla.</div>

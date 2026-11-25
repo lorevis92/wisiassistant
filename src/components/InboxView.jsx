@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase, callFunction } from '../lib/supabase'
 import { StatusBadge, Toast, useToast, EmptyState, Spinner } from './ui'
+import { useAuth } from '../lib/auth'
 import ChatThread from './ChatThread'
 import { fmtDateTime } from '../lib/utils'
 
@@ -10,6 +11,7 @@ import { fmtDateTime } from '../lib/utils'
  * every channel (widget polls / Telegram / WhatsApp are delivered by the function).
  */
 export default function InboxView({ clientId }) {
+  const { isOrgAdmin } = useAuth()
   const [list, setList] = useState(null)
   const [active, setActive] = useState(null)
   const [messages, setMessages] = useState([])
@@ -96,7 +98,7 @@ export default function InboxView({ clientId }) {
               </div>
             </div>
             <div className="thread-body">
-              <ChatThread messages={messages} />
+              <ChatThread messages={messages} showWhy={isOrgAdmin} />
               <div ref={bottom} />
             </div>
             <form onSubmit={send} className="thread-compose">

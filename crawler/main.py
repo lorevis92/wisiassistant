@@ -32,7 +32,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from chunking import chunk_markdown, slugify
+from chunking import CHUNKER_VERSION, chunk_markdown, slugify
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(levelname)s [crawler] %(message)s", force=True)
 log = logging.getLogger("crawler")
@@ -503,10 +503,6 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
     if they still load they are kept but flagged. Returns {status, error, summary, counts}."""
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
     from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-    try:
-        from crawl4ai.content_filter_strategy import PruningContentFilterLXML as PruningFilter
-    except ImportError:  # older crawl4ai
-        from crawl4ai.content_filter_strategy import PruningContentFilter as PruningFilter
 
     cid = client["id"]
     orphans = orphans or set()
@@ -523,14 +519,20 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
     existing_rows = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "kind": "eq.page", "select": "id,url,status,enabled,chunk_count"}) or []
     existing = {r["url"]: r for r in existing_rows}
 
-    md_gen = DefaultMarkdownGenerator(content_filter=PruningFilter(threshold=0.45, threshold_type="dynamic", min_word_threshold=8))
+    # Full page markdown, no "pruning" content filter: the filter dropped exactly the useful facts (hour lists, price
+    # tables, short FAQ answers) and kept generic prose, so the assistant could only point to the page. Boilerplate is
+    # removed structurally instead (tags + selectors below, link-only / repeated / cookie lines in chunking.clean_markdown).
+    md_gen = DefaultMarkdownGenerator()
     run_cfg = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         markdown_generator=md_gen,
         excluded_tags=["nav", "footer", "header", "aside", "script", "style", "form", "noscript"],
+        excluded_selector=EXCLUDED_SELECTOR,
+        js_code=EXPAND_JS,                 # open accordions / <details> / tabs so their text is in the page
+        delay_before_return_html=0.8,
         remove_overlay_elements=True,
         page_timeout=45000,
-        word_count_threshold=5,
+        word_count_threshold=1,            # keep short lines: "Check-in: 15:00", "Doppia 120 €"
     )
     browser_cfg = BrowserConfig(headless=True, verbose=False, text_mode=True)
 
@@ -578,10 +580,8 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
                     if not res.success and status_code not in (404, 410):
                         raise RuntimeError(res.error_message or "fetch failed")
                     md_obj = res.markdown
-                    # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str
-                    fit = getattr(md_obj, "fit_markdown", None) or getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
-                    raw = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
-                    md = fit if fit and len(fit) > 200 else raw
+                    # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str. Always the full markdown.
+                    md = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
                     title = (res.metadata or {}).get("title") or ""
                     not_found = looks_not_found(title, md, status_code)
                     if not_found:
@@ -784,6 +784,29 @@ def extract_anchor_map(html: str) -> dict[str, str]:
     return out
 
 
+EXTRACT_VERSION = "2"  # full markdown + expanded accordions (see run_crawl)
+
+# Boilerplate that is not in <nav>/<footer>/<header>: cookie / consent banners, breadcrumbs, share bars, skip links
+EXCLUDED_SELECTOR = ", ".join([
+    "[id*='cookie' i]", "[class*='cookie' i]", "[id*='consent' i]", "[class*='consent' i]", "[class*='gdpr' i]",
+    "[class*='breadcrumb' i]", "[role='navigation']", "[class*='share' i]", "[class*='social' i]", ".skip-link", "[class*='newsletter' i]",
+])
+
+# Opens collapsed content before the HTML is read: <details>, accordion toggles and tabs (buttons only, never links,
+# so nothing navigates away). Hidden panels that are already in the DOM are captured anyway; this covers lazy ones.
+EXPAND_JS = """
+(() => {
+  document.querySelectorAll('details').forEach(d => { d.open = true; });
+  const toggles = document.querySelectorAll('button[aria-expanded="false"], [role="button"][aria-expanded="false"], [role="tab"]:not([aria-selected="true"]), .accordion-button.collapsed, .elementor-tab-title, .vc_tta-tab > a[href^="#"]');
+  let n = 0;
+  toggles.forEach(el => { if (n++ < 60 && !el.closest('nav, header, footer')) { try { el.click(); } catch (e) {} } });
+  document.querySelectorAll('[hidden], .collapse:not(.show), [aria-hidden="true"]').forEach(el => {
+    if (!el.closest('nav, header, footer') && el.textContent.trim().length > 20) { el.hidden = false; el.style.display = 'block'; el.classList.add('show'); }
+  });
+})();
+"""
+
+
 async def upsert_page(cid: str, url: str, fields: dict) -> dict:
     if not url.startswith("http"):  # safety net: manual documents/FAQ/texts (wisi://…) are never written by the crawler
         raise RuntimeError(f"URL non valido per il crawler: {url[:80]}")
@@ -804,14 +827,15 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
     if words < 20:
         await mark_empty(cid, url, title, words, None)
         return "empty"
-    h = hashlib.sha256(text.encode()).hexdigest()[:32]
+    # the fingerprint includes the extraction/chunking version: new rules re-embed every page once, then only changes
+    h = hashlib.sha256(f"{EXTRACT_VERSION}:{CHUNKER_VERSION}:{text}".encode()).hexdigest()[:32]
     existing = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})
     if existing and existing[0].get("content_hash") == h:
         await upsert_page(cid, url, {"title": title, "status": "ok", "error": None, "last_crawled_at": now()})
         return "unchanged"  # same content fingerprint → skip re-embedding (saves money)
 
     page = await upsert_page(cid, url, {"title": title, "status": "pending", "error": None})
-    chunks = chunk_markdown(text, title=title, max_chars=1400)
+    chunks = chunk_markdown(text, title=title)
     vecs = await embed([c["content"] for c in chunks])
     rows = []
     for i, (c, v) in enumerate(zip(chunks, vecs)):

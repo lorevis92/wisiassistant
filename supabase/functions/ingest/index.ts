@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     if (!text.trim()) throw new Error('Nessun testo estratto')
 
     const md = b.kind === 'faq' ? `# ${b.title}\n\n${text}` : text.includes('\n#') || text.startsWith('#') ? text : `# ${b.title}\n\n${text}`
-    const parts = chunkMarkdown(md, { maxChars: 1400 })
+    const parts = chunkMarkdown(md, { title: b.title, label: b.kind === 'faq' ? 'FAQ' : b.kind === 'text' ? 'Informazioni' : 'Documento' })
     const vecs = await embed(parts.map((p) => p.content))
     const rows = parts.map((p, i) => ({
       client_id: b.client_id, page_id: page.id, idx: i, content: p.content, url: page.url,

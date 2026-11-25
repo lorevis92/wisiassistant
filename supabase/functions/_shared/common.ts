@@ -151,48 +151,122 @@ export async function llm(modelKey: string, messages: Msg[], opts: { temperature
 /** OpenAI reasoning models: GPT-5 family (except the non-reasoning *-chat variants) and the o-series. Keep in sync with src/lib/models.js. */
 export const isOpenAIReasoning = (model: string) => (/^gpt-5/.test(model) && !/-chat/.test(model)) || /^o\d/.test(model)
 
-// ------------------------------------------------------------------ CHUNKING (shared with manual content)
-/** Splits markdown-ish text into chunks by headings, keeping the heading path and an anchor-friendly slug. */
-export function chunkMarkdown(text: string, opts: { maxChars?: number } = {}) {
-  const maxChars = opts.maxChars ?? 1400
-  const lines = text.split('\n')
-  const out: { content: string; heading_path: string; anchor: string | null }[] = []
+// ------------------------------------------------------------------ CHUNKING (manual content; same rules as crawler/chunking.py)
+/**
+ * Structure-aware chunks: every chunk starts with a context header ("Documento: <title>", "Sezione: <H1 > H2>") so it
+ * can be understood and found on its own; sections split by headings; small sibling sections (FAQ items) kept together;
+ * long sections split by paragraph with a short overlap; lists and tables never cut mid-row, long tables repeat their
+ * header row in every part.
+ */
+const TABLE_ROW = /^\s*\|.*\|\s*$/
+const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/
+const LIST_ITEM = /^\s*([-*+•]|\d+[.)])\s+/
+
+function mdBlocks(body: string): string[] {
+  const blocks: string[] = []
+  let cur: string[] = []
+  let kind: string | null = null
+  const close = () => { if (cur.length) blocks.push(cur.join('\n').trim()); cur = []; kind = null }
+  for (const line of body.split('\n')) {
+    if (!line.trim()) { if (kind === 'table' || kind === 'list') continue; close(); continue }
+    let k = TABLE_ROW.test(line) ? 'table' : LIST_ITEM.test(line) ? 'list' : 'text'
+    if (kind === 'list' && k === 'text' && /^[ \t]/.test(line)) k = 'list'
+    if (kind === null) kind = k
+    else if (k !== kind) {
+      if (kind === 'text' && k !== 'text' && cur.length <= 2 && cur.join(' ').length < 220) kind = k // lead-in stays with its list
+      else { close(); kind = k }
+    }
+    cur.push(line)
+  }
+  close()
+  return blocks.filter(Boolean)
+}
+
+function splitLong(block: string, max: number): string[] {
+  if (block.length <= max) return [block]
+  const lines = block.split('\n')
+  if (TABLE_ROW.test(lines[0])) {
+    const head = lines.length > 1 && TABLE_SEP.test(lines[1]) ? lines.slice(0, 2) : lines.slice(0, 1)
+    const parts: string[] = []
+    let cur = [...head]
+    for (const r of lines.slice(head.length)) {
+      if (cur.join('\n').length + r.length > max && cur.length > head.length) { parts.push(cur.join('\n')); cur = [...head] }
+      cur.push(r)
+    }
+    parts.push(cur.join('\n'))
+    return parts
+  }
+  if (lines.length > 1) {
+    const parts: string[] = []
+    let cur = ''
+    for (const ln of lines) { if (cur && cur.length + ln.length + 1 > max) { parts.push(cur); cur = ln } else cur = cur ? `${cur}\n${ln}` : ln }
+    return cur ? [...parts, cur] : parts
+  }
+  const parts: string[] = []
+  let cur = block
+  while (cur.length > max) {
+    let cut = cur.lastIndexOf('. ', max)
+    cut = cut > max / 3 ? cut + 1 : max
+    parts.push(cur.slice(0, cut).trim()); cur = cur.slice(cut).trim()
+  }
+  return cur ? [...parts, cur] : parts
+}
+
+export function chunkMarkdown(text: string, opts: { maxChars?: number; title?: string; label?: string } = {}) {
+  const max = opts.maxChars ?? 1800, minChars = 220, overlap = 320
+  const slug = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  type Sec = { path: string[]; body: string }
+  const sections: Sec[] = []
   const stack: { level: number; text: string }[] = []
   let buf: string[] = []
-  const slug = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-  const flush = () => {
-    const body = buf.join('\n').trim()
-    buf = []
-    if (!body) return
-    const heading_path = stack.map((s) => s.text).join(' > ')
-    const anchor = stack.length ? slug(stack[stack.length - 1].text) : null
-    const head = heading_path ? `${heading_path}\n\n` : ''
-    // split long sections by paragraphs
-    const paras = body.split(/\n\s*\n/)
-    let cur = ''
-    for (const p of paras) {
-      if ((cur + '\n\n' + p).length > maxChars && cur) { out.push({ content: head + cur.trim(), heading_path, anchor }); cur = p }
-      else cur = cur ? cur + '\n\n' + p : p
-    }
-    // hard-split very long single paragraphs at sentence boundaries
-    while (cur.length > maxChars * 1.5) {
-      let cut = cur.lastIndexOf('. ', maxChars)
-      if (cut < maxChars / 3) cut = maxChars
-      out.push({ content: head + cur.slice(0, cut + 1).trim(), heading_path, anchor })
-      cur = cur.slice(cut + 1)
-    }
-    if (cur.trim()) out.push({ content: head + cur.trim(), heading_path, anchor })
-  }
-  for (const line of lines) {
-    const m = /^(#{1,6})\s+(.*)$/.exec(line)
+  const push = () => { const body = buf.join('\n').trim(); if (body) sections.push({ path: stack.map((s) => s.text), body }); buf = [] }
+  for (const line of text.replace(/\r/g, '').split('\n')) {
+    const m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line)
     if (m) {
-      flush()
+      push()
       const level = m[1].length
       while (stack.length && stack[stack.length - 1].level >= level) stack.pop()
       stack.push({ level, text: m[2].trim() })
     } else buf.push(line)
   }
-  flush()
+  push()
+
+  // small sibling sections (FAQ items, short cards) stay together
+  const groups: Sec[][] = []
+  for (const s of sections) {
+    const g = groups[groups.length - 1]
+    if (g) {
+      const parent = g[0].path.slice(0, -1).join('>')
+      const size = g.reduce((a, x) => a + x.body.length + (x.path[x.path.length - 1] || '').length + 8, 0)
+      if (s.path.slice(0, -1).join('>') === parent && s.path.length === g[0].path.length && size + s.body.length < max
+          && s.body.length < minChars && g.every((x) => x.body.length < minChars)) { g.push(s); continue }
+    }
+    groups.push([s])
+  }
+
+  const out: { content: string; heading_path: string; anchor: string | null }[] = []
+  const label = opts.label || 'Documento'
+  for (const g of groups) {
+    const single = g.length === 1
+    const path = single ? g[0].path : g[0].path.slice(0, -1)
+    const heading_path = path.join(' > ')
+    const blocks = single ? mdBlocks(g[0].body) : g.map((s) => (s.path.length ? `${s.path[s.path.length - 1]}\n${s.body}` : s.body))
+    const anchor = g[0].path.length ? slug(g[0].path[g[0].path.length - 1]) : null
+    const header = [opts.title ? `${label}: ${opts.title}` : '', heading_path && heading_path !== opts.title ? `Sezione: ${heading_path}` : ''].filter(Boolean).join('\n')
+    const room = max - header.length - 2
+    const pieces = blocks.flatMap((b) => splitLong(b, room))
+    let cur: string[] = []
+    const emit = () => out.push({ content: (header ? `${header}\n\n` : '') + cur.join('\n\n'), heading_path, anchor })
+    for (const p of pieces) {
+      if (cur.length && cur.reduce((a, x) => a + x.length + 2, 0) + p.length > room) {
+        emit()
+        const last = cur[cur.length - 1]
+        cur = last.length <= overlap && !TABLE_ROW.test(last.split('\n')[0]) ? [last] : []
+      }
+      cur.push(p)
+    }
+    if (cur.length) emit()
+  }
   return out
 }
 

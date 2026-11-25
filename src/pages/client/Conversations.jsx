@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { StatusBadge, Toast, useToast, EmptyState, Spinner } from '../../components/ui'
+import { useAuth } from '../../lib/auth'
 import ChatThread from '../../components/ChatThread'
 import { daysAgo, fmtDateTime, todayIso } from '../../lib/utils'
 import { exportConversationsPdf } from '../../lib/pdf'
 import { CHANNELS } from '../../lib/models'
 
 export default function Conversations({ client }) {
+  const { isOrgAdmin } = useAuth()
   const [from, setFrom] = useState(daysAgo(30))
   const [to, setTo] = useState(todayIso())
   const [channel, setChannel] = useState('')
@@ -96,7 +98,7 @@ export default function Conversations({ client }) {
                 </div>
                 {current.status !== 'resolved' && <button className="btn sm" onClick={async () => { await supabase.from('wa_conversations').update({ status: 'resolved' }).eq('id', current.id); load() }}>Segna risolta</button>}
               </div>
-              <div className="thread-body"><ChatThread messages={messages} /></div>
+              <div className="thread-body"><ChatThread messages={messages} showWhy={isOrgAdmin} /></div>
             </>
           ) : <EmptyState icon="chat" title="Seleziona una conversazione">La trascrizione compare qui, come l’ha vista il visitatore.</EmptyState>}
         </div>

@@ -11,6 +11,7 @@ import ClientInbox from './ClientInbox'
 import ClientReports from './ClientReports'
 import Settings from './Settings'
 import Leads from './Leads'
+import TestQuestions from './TestQuestions'
 
 const TABS = [
   ['', 'Panoramica'],
@@ -20,6 +21,7 @@ const TABS = [
   ['inbox', 'Inbox'],
   ['leads', 'Lead'],
   ['reports', 'Report'],
+  ['tests', 'Prova'],
   ['settings', 'Impostazioni'],
 ]
 
@@ -98,6 +100,7 @@ export default function ClientPage() {
         <Route path="leads" element={<Leads client={client} />} />
         <Route path="reports" element={<ClientReports client={client} reload={reload} />} />
         <Route path="settings" element={<Settings client={client} reload={reload} />} />
+        <Route path="tests" element={<TestQuestions client={client} />} />
       </Routes>
     </div>
   )

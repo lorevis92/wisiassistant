@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { admin, json, err, CORS, requireClientAccess } from '../_shared/common.ts'
+import { answerQuestion } from '../_shared/answer.ts'
 import { deliverToChannel } from '../_shared/channels.ts'
 import { runMessage } from '../_shared/rag.ts'
 
@@ -12,6 +13,7 @@ import { runMessage } from '../_shared/rag.ts'
  *                                                                            without a cursor returns no messages, just `cursor` (latest id)
  *  - feedback    { message_id, value }                                     → 👍/👎
  *  - end         { client_slug, conversation_id }                         → visitor ended the chat ("Termina chat"): open → resolved
+ *  - test        { client_id, question }        (members with access to the client) → answer + retrieval, nothing stored
  *  - human_reply { conversation_id, content }  (members with access to the conversation's client)               → operator reply, delivered to channel
  *
  * The RAG pipeline lives in _shared/rag.ts (runMessage) and is reused by the channel webhooks.
@@ -31,6 +33,17 @@ Deno.serve(async (req) => {
       case 'poll': return await modePoll(sb, body)
       case 'feedback': return await modeFeedback(sb, body)
       case 'end': return await modeEnd(sb, body)
+      case 'test': {
+        // test questions (client page → Prova): same retrieval + answer as the chat, nothing stored
+        const denied = await requireClientAccess(req, body.client_id)
+        if (denied) return denied
+        const question = String(body.question || '').trim().slice(0, 1000)
+        if (!question) return err('Domanda vuota')
+        const { data: client } = await sb.from('wa_clients').select('*').eq('id', body.client_id).single()
+        if (!client) return err('Cliente non trovato', 404)
+        const r = await answerQuestion(sb, client, question, [])
+        return json({ answer: r.answer, confident: r.confident, retrieval: r.retrieval, model: client.model })
+      }
       case 'human_reply': {
         const { data: c } = await sb.from('wa_conversations').select('client_id').eq('id', body.conversation_id).maybeSingle()
         if (!c) return err('Conversazione non trovata', 404)

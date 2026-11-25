@@ -1,9 +1,8 @@
 // deno-lint-ignore-file no-explicit-any
-import { embed, llm, sendEmail } from './common.ts'
+import { sendEmail } from './common.ts'
 import { deliverToChannel } from './channels.ts'
-import { baseRules, handoffEnabled, lowConfidenceNote } from './policy.ts'
-
-const LANG_NAME: Record<string, string> = { it: 'italiano', de: 'tedesco', fr: 'francese', en: 'inglese' }
+import { handoffEnabled } from './policy.ts'
+import { answerQuestion } from './answer.ts'
 
 /** Core pipeline: used by the widget/standalone and by channel webhooks. */
 export async function runMessage(sb: any, client: any, b: any) {
@@ -48,41 +47,17 @@ export async function runMessage(sb: any, client: any, b: any) {
   const { data: hist } = await sb.from('wa_messages').select('role,content').eq('conversation_id', conv.id).order('created_at', { ascending: false }).limit(11)
   const history = (hist || []).reverse().slice(0, -1).map((m: any) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }))
 
-  // retrieval: embed a query that includes the last user turn for context
-  const lastUser = history.filter((h: any) => h.role === 'user').slice(-1)[0]?.content
-  const query = lastUser && content.length < 60 ? `${lastUser}\n${content}` : content
-  const [qvec] = await embed([query])
-  const { data: hits } = await sb.rpc('wa_match_chunks', { p_client_id: client.id, p_embedding: qvec, p_match_count: 8, p_min_similarity: 0 })
-  const top = (hits || []) as any[]
-  const best = top[0]?.similarity ?? 0
-  const threshold = Number(client.confidence_threshold ?? 0.35)
-  const confident = best >= threshold
+  // retrieval + answer (shared with the test questions): see answer.ts
+  const { answer, result, confident, retrieval, sources } = await answerQuestion(sb, client, content, history)
   const wantsHuman = /\b(operatore|persona|umano|human|parlare con qualcuno|agent|mitarbeiter|conseiller|someone real)\b/i.test(content)
 
-  // build context with URL + section so the model can link naturally
-  const ctx = top.filter((h) => h.similarity >= Math.min(threshold, 0.2)).map((h, i) => {
-    const link = h.url.startsWith('wisi://') ? (h.title ? `(documento: ${h.title})` : '') : `${h.url}${h.anchor ? `#${h.anchor}` : ''}`
-    return `[${i + 1}] ${h.heading_path ? `Sezione: ${h.heading_path}\n` : ''}${link ? `Link: ${link}\n` : ''}${h.content}`
-  }).join('\n\n---\n\n')
-
-  const langRule = client.language && client.language !== 'auto' ? `Rispondi sempre in ${LANG_NAME[client.language] || client.language}.` : 'Rispondi nella stessa lingua in cui scrive l’utente.'
   const handoff = handoffEnabled(client)
-  const system = [
-    client.instructions || `Sei l'assistente virtuale di ${client.name}. Rispondi in modo cortese e conciso usando solo le informazioni nel contesto.`,
-    // common rules for every client and channel: after the client's instructions, and they win on contact/operator topics
-    baseRules(client),
-    langRule,
-    `Hai a disposizione dei frammenti di contesto numerati. Ogni frammento ha un "Link" (URL della pagina, con #sezione quando disponibile): quando è utile per l'utente, inserisci il link direttamente nella risposta in formato markdown [testo](url), senza chiamarlo "fonte" e senza elencare le fonti alla fine. Non inventare link.`,
-    confident ? '' : lowConfidenceNote(client),
-    `Formattazione: testo semplice, al massimo grassetto **così**; niente tabelle, niente titoli.`,
-    `\n=== CONTESTO ===\n${ctx || '(nessun contenuto rilevante trovato)'}\n=== FINE CONTESTO ===`,
-  ].filter(Boolean).join('\n\n')
-
-  const result = await llm(client.model, [{ role: 'system', content: system }, ...history, { role: 'user', content }], { temperature: Number(client.temperature ?? 0.2), max_tokens: 900 })
-  const answer = result.text.trim() || 'Mi dispiace, non riesco a rispondere in questo momento.'
-
-  const sources = top.slice(0, 5).map((h) => ({ url: h.url, anchor: h.anchor, title: h.title, heading_path: h.heading_path, score: Number(h.similarity.toFixed(3)) }))
-  const { data: botMsg } = await sb.from('wa_messages').insert({ conversation_id: conv.id, role: 'assistant', content: answer, sources, model: client.model, tokens_in: result.tokens_in, tokens_out: result.tokens_out }).select().single()
+  const row = { conversation_id: conv.id, role: 'assistant', content: answer, sources, retrieval, model: client.model, tokens_in: result.tokens_in, tokens_out: result.tokens_out }
+  let { data: botMsg, error: insErr } = await sb.from('wa_messages').insert(row).select().single()
+  if (insErr && /retrieval/.test(insErr.message)) { // migration 0009 not run yet
+    const { retrieval: _r, ...legacy } = row
+    ;({ data: botMsg } = await sb.from('wa_messages').insert(legacy).select().single())
+  }
 
   // no-answer tracking + escalation
   if (!confident) await sb.from('wa_messages').update({ no_answer: true }).eq('id', userMsg.id)
