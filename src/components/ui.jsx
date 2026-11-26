@@ -39,6 +39,7 @@ export function StatusBadge({ status }) {
     failed: ['red', 'Errore'],
     empty: ['yellow', 'Vuota'],
     gone: ['red', 'Sparita'],
+    excluded: ['muted', 'Esclusa'],
     done: ['green', 'Completato'],
     running: ['yellow', 'In corso'],
     queued: ['muted', 'In coda'],

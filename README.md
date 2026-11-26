@@ -182,6 +182,24 @@ poi il link; mai il solo link.
   regole) oppure Crawling → Pagine indicizzate → *Seleziona visibili* → *Re-crawl*. I documenti caricati a mano vanno
   ricaricati per avere la nuova suddivisione.
 
+## Crawler: robustezza (migrazione 0010)
+
+- **Pagine di servizio escluse in automatico** (mappatura, crawl, re-crawl): parametri `action=`, `endpoint=`,
+  `view_in_browser`, `mailpoet_page`, `replytocom`, `s=` (ricerca), `preview`, `share`, `print`, e percorsi di accesso,
+  carrello, checkout, account, feed, `wp-login`, `wp-admin`, `xmlrpc`. In *Scopri & crawla* compaiono come "Pagina di
+  servizio" con il motivo; per includerne una si seleziona a mano, per i re-crawl si aggiunge una regola *Includi*.
+  Quelle già indicizzate in passato vengono disattivate (non cancellate) al primo re-crawl.
+- **Apertura di accordion/schede sicura**: solo `<details>`, pulsanti con `aria-expanded` e schede che non sono link,
+  con clic sui link e invio dei form bloccati durante l'apertura; lettura dopo il caricamento completo. Se la pagina
+  "naviga" mentre viene letta, si riprova senza aprire nulla.
+- **Falsi blocchi anti-bot** (risposte piccole senza `<body>`): 3 tentativi con pausa crescente, rallentamento e una
+  richiesta alla volta verso quel sito, poi recupero via HTTP semplice. Ritmo gentile per cliente:
+  `wa_clients.crawl_rps` (Impostazioni → Crawling, default 1 richiesta al secondo).
+- **Nessuna perdita di contenuto**: se una pagina già indicizzata fallisce, testo e frammenti restano attivi e la
+  pagina mostra "Ultimo tentativo fallito" con il motivo (`last_error`, `last_failed_at`). Un job in cui la maggior
+  parte delle pagine fallisce finisce in errore, non "completato".
+- Pagine indicizzate: filtro per stato (OK, con errore, escluse, vuote) e "Riprova tutte quelle in errore".
+
 ## Sviluppo locale
 ```bash
 npm install

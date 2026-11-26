@@ -95,13 +95,16 @@ function Discover({ client, reload, setToast }) {
     return () => { supabase.removeChannel(ch) }
   }, [client.id])
 
+  const [autoEx, setAutoEx] = useState({})       // url → reason: service / tracking pages excluded by the crawler
+  const [showService, setShowService] = useState(false)
   const excluded = (u) => (client.exclude_patterns || []).concat(extraExc).some((p) => matchesPattern(u, p))
   const included = (u) => !(client.include_patterns || []).length || client.include_patterns.some((p) => matchesPattern(u, p))
 
   const visible = useMemo(() => {
     const ql = q.toLowerCase()
-    return urls.filter((u) => (!ql || u.toLowerCase().includes(ql)) && (!prefix || matchesPattern(u, prefix)))
-  }, [urls, q, prefix])
+    return urls.filter((u) => (!ql || u.toLowerCase().includes(ql)) && (!prefix || matchesPattern(u, prefix)) && (showService || !autoEx[u]))
+  }, [urls, q, prefix, showService, autoEx])
+  const autoCount = Object.keys(autoEx).length
 
   const prefixes = useMemo(() => urlPathPrefixes(urls), [urls])
   const staleUrls = useMemo(() => urls.filter((u) => staleYear(u)), [urls])
@@ -111,8 +114,9 @@ function Discover({ client, reload, setToast }) {
     try {
       const r = await callCrawler('/map', { client_id: client.id, url: startUrl })
       const list = r.urls || []
-      setUrls(list)
-      const sel = new Set(list.filter((u) => included(u) && !excluded(u) && !indexed.has(u)))
+      const auto = r.auto_excluded || {}
+      setUrls(list); setAutoEx(auto)
+      const sel = new Set(list.filter((u) => included(u) && !excluded(u) && !auto[u] && !indexed.has(u)))
       setSelected(sel)
       setToast(`${list.length} URL trovati · ${sel.size} selezionati`)
     } catch (e) { setToast(e.message) }
@@ -186,17 +190,28 @@ function Discover({ client, reload, setToast }) {
             </div>
           )}
 
+          {autoCount > 0 && (
+            <div className="callout row between wrap" style={{ marginBottom: 10 }}>
+              <span className="small">
+                <b style={{ color: 'var(--heading)' }}>{autoCount} indirizzi esclusi automaticamente</b>: pagine di servizio o tracciamento
+                (ricerca interna, newsletter, accesso, carrello, feed, anteprime…). Non vengono né visitati né indicizzati.
+                Per includerne uno selezionalo a mano; per i re-crawl automatici aggiungi una regola “Includi”.
+              </span>
+              <button className="btn sm" onClick={() => setShowService(!showService)}>{showService ? 'Nascondi' : 'Mostra'}</button>
+            </div>
+          )}
+
           <div className="table-wrap" style={{ maxHeight: 440 }}>
             <table className="table">
-              <thead><tr><th style={{ width: 30 }}></th><th>URL</th><th style={{ width: 150 }}>Stato</th></tr></thead>
+              <thead><tr><th style={{ width: 30 }}></th><th>URL</th><th style={{ width: 210 }}>Stato</th></tr></thead>
               <tbody>
                 {visible.slice(0, 2000).map((u) => {
-                  const ex = excluded(u); const idx = indexed.has(u)
+                  const ex = excluded(u); const idx = indexed.has(u); const svc = autoEx[u]
                   return (
-                    <tr key={u} style={{ opacity: ex ? 0.45 : 1 }}>
-                      <td><input type="checkbox" className="checkbox" checked={selected.has(u)} onChange={() => toggle(u)} /></td>
-                      <td className="mono"><span className="truncate" style={{ maxWidth: 700 }}>{u}</span></td>
-                      <td className="row" style={{ gap: 4 }}>{ex ? <span className="badge muted">Escluso</span> : idx ? <span className="badge green">Indicizzato</span> : <span className="badge">Nuovo</span>}<StaleBadge year={staleYear(u)} /></td>
+                    <tr key={u} style={{ opacity: ex || (svc && !selected.has(u)) ? 0.45 : 1 }}>
+                      <td><input type="checkbox" className="checkbox" checked={selected.has(u)} onChange={() => toggle(u)} aria-label={svc ? `Includi comunque (${svc})` : 'Seleziona'} /></td>
+                      <td className="mono"><span className="truncate" style={{ maxWidth: 700 }}>{u}</span>{svc && <div className="small muted" style={{ fontFamily: 'var(--font-ui)' }}>Esclusa automaticamente: {svc}</div>}</td>
+                      <td className="row" style={{ gap: 4 }}>{svc ? <span className="badge muted" title={svc}>Pagina di servizio</span> : ex ? <span className="badge muted">Escluso</span> : idx ? <span className="badge green">Indicizzato</span> : <span className="badge">Nuovo</span>}<StaleBadge year={staleYear(u)} /></td>
                     </tr>
                   )
                 })}
@@ -227,6 +242,17 @@ function JobProgress({ job }) {
 }
 
 /* ------------------------------ INDEXED PAGES ------------------------------ */
+/** Status filter of the indexed pages table. "error" = failed fetch, or a failed last attempt on an indexed page. */
+function pageMatchesStatus(p, status) {
+  switch (status) {
+    case 'ok': return p.enabled && p.status === 'ok' && !p.last_error
+    case 'error': return p.status === 'failed' || !!p.last_error
+    case 'excluded': return !p.enabled || ['excluded', 'gone'].includes(p.status)
+    case 'empty': return p.status === 'empty'
+    default: return true
+  }
+}
+
 function IndexedPages({ client, setToast }) {
   const [pages, setPages] = useState(null)
   const [q, setQ] = useState('')
@@ -234,9 +260,12 @@ function IndexedPages({ client, setToast }) {
   const [sel, setSel] = useState(new Set())
   const [sort, setSort] = useState('url')
   const [onlyStale, setOnlyStale] = useState(false)
+  const [status, setStatus] = useState('all') // all | ok | error | excluded | empty
 
   const load = async () => {
-    const { data } = await supabase.from('wa_pages').select('id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count').eq('client_id', client.id).eq('kind', 'page').order('url')
+    const base = 'id,url,title,status,chunk_count,enabled,last_crawled_at,error,word_count'
+    let { data, error } = await supabase.from('wa_pages').select(`${base},last_error,last_failed_at`).eq('client_id', client.id).eq('kind', 'page').order('url')
+    if (error) ({ data } = await supabase.from('wa_pages').select(base).eq('client_id', client.id).eq('kind', 'page').order('url')) // migration 0010 not run yet
     setPages(data || [])
   }
   useEffect(() => { load() }, [client.id])
@@ -257,11 +286,13 @@ function IndexedPages({ client, setToast }) {
   const staleActive = (pages || []).filter((p) => staleById[p.id] && p.enabled)
   const visible = useMemo(() => {
     const ql = q.toLowerCase()
-    let list = (pages || []).filter((p) => (!ql || p.url.toLowerCase().includes(ql) || (p.title || '').toLowerCase().includes(ql)) && (!prefix || matchesPattern(p.url, prefix)) && (!onlyStale || staleById[p.id]))
+    let list = (pages || []).filter((p) => (!ql || p.url.toLowerCase().includes(ql) || (p.title || '').toLowerCase().includes(ql)) && (!prefix || matchesPattern(p.url, prefix)) && (!onlyStale || staleById[p.id]) && pageMatchesStatus(p, status))
     if (sort === 'chunks') list = [...list].sort((a, b) => (b.chunk_count || 0) - (a.chunk_count || 0))
     if (sort === 'date') list = [...list].sort((a, b) => new Date(b.last_crawled_at || 0) - new Date(a.last_crawled_at || 0))
     return list
-  }, [pages, q, prefix, sort, onlyStale, staleById])
+  }, [pages, q, prefix, sort, onlyStale, staleById, status])
+  const failedPages = (pages || []).filter((p) => pageMatchesStatus(p, 'error'))
+  const statusCount = (k) => (pages || []).filter((p) => pageMatchesStatus(p, k)).length
 
   const toggle = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
   const ids = () => Array.from(sel)
@@ -301,6 +332,13 @@ function IndexedPages({ client, setToast }) {
             <option value="">Tutti i gruppi</option>
             {prefixes.map(([p, n]) => <option key={p} value={`${p}*`}>{p} ({n})</option>)}
           </select>
+          <select className="select" style={{ maxWidth: 190 }} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filtra per stato">
+            <option value="all">Tutti gli stati ({(pages || []).length})</option>
+            <option value="ok">OK ({statusCount('ok')})</option>
+            <option value="error">Con errore ({statusCount('error')})</option>
+            <option value="excluded">Escluse o disattivate ({statusCount('excluded')})</option>
+            <option value="empty">Vuote ({statusCount('empty')})</option>
+          </select>
           <select className="select" style={{ maxWidth: 170 }} value={sort} onChange={(e) => setSort(e.target.value)}>
             <option value="url">Ordina: URL</option>
             <option value="chunks">Ordina: più pesanti</option>
@@ -322,6 +360,7 @@ function IndexedPages({ client, setToast }) {
       )}
 
       <div className="row wrap" style={{ marginBottom: 10 }}>
+        {failedPages.length > 0 && <button className="btn sm primary" onClick={() => recrawl(failedPages.map((p) => p.id))}>Riprova tutte quelle in errore ({failedPages.length})</button>}
         <button className="btn sm" onClick={() => setSel(new Set(visible.map((p) => p.id)))}>Seleziona visibili</button>
         <button className="btn sm" onClick={() => setSel(new Set())}>Nessuno</button>
         <button className="btn sm" disabled={!sel.size} onClick={() => recrawl(ids())}>Re-crawl ({sel.size})</button>
@@ -345,8 +384,18 @@ function IndexedPages({ client, setToast }) {
                   <td>
                     <a className="mono truncate" href={p.url} target="_blank" rel="noopener" style={{ maxWidth: 520, color: 'var(--text)' }}>{p.url}</a>
                     <div className="small secondary truncate" style={{ maxWidth: 520 }}>{staleById[p.id] ? <><StaleBadge year={staleById[p.id]} />{' '}</> : null}{p.title || ''}{p.error ? ` · ${p.error}` : ''}</div>
+                    {p.last_error && p.status !== 'failed' && (
+                      <div className="small" style={{ color: 'var(--yellow)', maxWidth: 520 }}>
+                        Ultimo tentativo fallito{p.last_failed_at ? ` (${fmtDateTime(p.last_failed_at)})` : ''}: {p.last_error}. Il contenuto indicizzato resta attivo.
+                      </div>
+                    )}
                   </td>
-                  <td>{p.enabled ? <StatusBadge status={p.status} /> : p.status === 'gone' ? <StatusBadge status="gone" /> : <span className="badge muted">Disattiva</span>}</td>
+                  <td>
+                    <div className="col" style={{ gap: 4, alignItems: 'flex-start' }}>
+                      {p.enabled ? <StatusBadge status={p.status} /> : ['gone', 'excluded'].includes(p.status) ? <StatusBadge status={p.status} /> : <span className="badge muted">Disattiva</span>}
+                      {p.last_error && p.status !== 'failed' && <span className="badge yellow">Ultimo tentativo fallito</span>}
+                    </div>
+                  </td>
                   <td className="mono">{p.chunk_count || 0}</td>
                   <td className="mono">{p.word_count || 0}</td>
                   <td className="mono small">{fmtDateTime(p.last_crawled_at)}</td>

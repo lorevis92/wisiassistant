@@ -31,6 +31,7 @@ export default function Settings({ client, reload }) {
     },
     report_frequency: client.report_frequency || 'none',
     recrawl_frequency: client.recrawl_frequency || 'none',
+    ...(client.crawl_rps !== undefined ? { crawl_rps: client.crawl_rps ?? 1 } : {}),
     report_recipients: (client.report_recipients || []).join(', '),
     report_auto_send: !!client.report_auto_send,
     telegram_bot_token: client.telegram_bot_token || '',
@@ -55,6 +56,7 @@ export default function Settings({ client, reload }) {
       allowed_domains: f.allowed_domains.split('\n').map((s) => s.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')).filter(Boolean),
       report_recipients: f.report_recipients.split(',').map((s) => s.trim()).filter(Boolean),
       confidence_threshold: Number(f.confidence_threshold), temperature: Number(f.temperature), rate_limit_per_hour: Number(f.rate_limit_per_hour),
+      ...(f.crawl_rps !== undefined ? { crawl_rps: Math.min(10, Math.max(0.1, Number(f.crawl_rps) || 1)) } : {}),
       widget: {
         ...f.widget,
         suggestions: (typeof f.widget.suggestions === 'string' ? f.widget.suggestions.split('\n') : f.widget.suggestions).map((s) => s.trim()).filter(Boolean),
@@ -193,6 +195,12 @@ export default function Settings({ client, reload }) {
               </select>
               <div className="hint">Ogni notte (02:30 UTC) il sistema rimappa il sito dei clienti in scadenza, rispetta le regole include/exclude, indicizza le pagine nuove, aggiorna solo quelle cambiate e disattiva quelle sparite. Documenti, FAQ e testi caricati a mano non vengono mai toccati. I clienti in pausa vengono saltati.</div>
             </div>
+            {f.crawl_rps !== undefined && (
+              <div className="field"><label className="label" htmlFor="crawl-rps">Richieste al secondo verso il sito</label>
+                <input id="crawl-rps" className="input mono" type="number" min="0.1" max="10" step="0.1" style={{ maxWidth: 140 }} value={f.crawl_rps} onChange={(e) => set('crawl_rps', e.target.value)} />
+                <div className="hint">Ritmo gentile durante il crawl (1 = una pagina al secondo). Se il sito rallenta o blocca, il crawler rallenta da solo e riprova.</div>
+              </div>
+            )}
             <div className="row between wrap">
               <span className="small secondary">
                 Ultimo re-crawl: {client.last_recrawl_at ? fmtDateTime(client.last_recrawl_at) : 'mai'}

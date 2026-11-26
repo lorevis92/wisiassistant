@@ -15,11 +15,13 @@ Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY, CRAWLER_SECRET (op
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import os
 import sys
 from collections import Counter
+from types import SimpleNamespace
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -209,7 +211,56 @@ def allowed_by_rules(url: str, include: list[str], exclude: list[str]) -> bool:
 
 
 SKIP_EXT = re.compile(r"\.(png|jpe?g|gif|svg|webp|ico|css|js|mjs|json|xml|zip|rar|7z|gz|mp4|mp3|wav|avi|mov|woff2?|ttf|eot|pdf|docx?|xlsx?|pptx?)(\?.*)?$", re.I)
-SKIP_PATH = re.compile(r"/(wp-admin|wp-json|wp-login|cart|checkout|account|login|logout|feed|xmlrpc\.php|cdn-cgi)(/|$)", re.I)
+# never pages at all: dropped silently
+SKIP_PATH = re.compile(r"/(wp-json|cdn-cgi)(/|$)", re.I)
+
+# Service / tracking / account pages: excluded by default (mapping, crawl, re-crawl) and shown in the dashboard with the
+# reason. An include rule that matches the URL forces it back in; a URL picked by hand in "Scopri & crawla" is crawled.
+SERVICE_PARAMS = {
+    "action": "azione di servizio (?action=)", "endpoint": "endpoint tecnico (?endpoint=)", "view_in_browser": "newsletter vista nel browser",
+    "mailpoet_page": "pagina di MailPoet (newsletter)", "mailpoet_router": "pagina di MailPoet (newsletter)", "replytocom": "risposta ai commenti",
+    "s": "ricerca interna del sito", "preview": "anteprima di bozza", "preview_id": "anteprima di bozza", "share": "link di condivisione",
+    "print": "versione da stampare", "add-to-cart": "aggiunta al carrello", "add_to_cart": "aggiunta al carrello", "wc-ajax": "chiamata tecnica WooCommerce",
+    "doing_wp_cron": "processo tecnico WordPress", "unapproved": "commento non approvato", "moderation-hash": "commento non approvato",
+}
+SERVICE_PATH = [
+    (re.compile(r"/(wp-login\.php|wp-admin|xmlrpc\.php)(/|$)", re.I), "accesso / amministrazione WordPress"),
+    (re.compile(r"/(feed|rss|atom)(/|$)|/comments/feed(/|$)", re.I), "feed RSS"),
+    (re.compile(r"/(cart|carrello|basket|warenkorb|panier)(/|$)", re.I), "carrello"),
+    (re.compile(r"/(checkout|cassa|kasse|commande)(/|$)", re.I), "pagamento (checkout)"),
+    (re.compile(r"/(my-account|mio-account|il-mio-account|account|mon-compte|mein-konto)(/|$)", re.I), "area account"),
+    (re.compile(r"/(login|logout|signin|sign-in|accedi|registrati|register|lost-password|password-dimenticata)(/|$)", re.I), "pagina di accesso"),
+    (re.compile(r"/(trackback|embed)/?$", re.I), "pagina tecnica WordPress"),
+    (re.compile(r"/(print|stampa)(/|$)", re.I), "versione da stampare"),
+    (re.compile(r"/(view-in-browser|view_in_browser|mailpoet)(/|$)", re.I), "newsletter vista nel browser"),
+]
+
+
+def auto_exclusion(url: str) -> str | None:
+    """Why a URL is a service / tracking page excluded by default (None = a normal page)."""
+    try:
+        p = urlparse(url)
+    except Exception:
+        return None
+    for k, _ in parse_qsl(p.query, keep_blank_values=True):
+        reason = SERVICE_PARAMS.get(k.lower())
+        if reason:
+            return reason
+    for rx, reason in SERVICE_PATH:
+        if rx.search(p.path or "/"):
+            return reason
+    return None
+
+
+def forced_by_rules(url: str, include: list[str]) -> bool:
+    """An explicit include rule matching the URL overrides the automatic exclusions."""
+    path = urlparse(url).path or "/"
+    return any(_pattern_re(p).match(path if p.startswith("/") else url) for p in include or [])
+
+
+def excluded_reason(url: str, include: list[str]) -> str | None:
+    r = auto_exclusion(url)
+    return None if r is None or forced_by_rules(url, include) else r
 
 
 # tracking / session params that never change the content of a page
@@ -396,7 +447,8 @@ async def discover_links(root: str, client: httpx.AsyncClient, seed: set[str]) -
             for l in links:
                 if l not in found:
                     found.add(l)
-                    queue.append(l)
+                    if not auto_exclusion(l):  # listed (and flagged) but never visited: no ?action=… requests
+                        queue.append(l)
     return found
 
 
@@ -431,7 +483,9 @@ async def map_site(req: MapReq, auth=Depends(require_auth)):
         # All URLs are returned; the dashboard shows which ones are excluded by the saved rules
         # (so the admin can see what is being filtered and adjust the rules).
         inc, exc = client_rules(client)
-        return {"urls": urls, "count": len(urls), "excluded": sum(1 for u in urls if not allowed_by_rules(u, inc, exc))}
+        auto = {u: r for u in urls if (r := excluded_reason(u, inc))}
+        return {"urls": urls, "count": len(urls), "excluded": sum(1 for u in urls if not allowed_by_rules(u, inc, exc)),
+                "auto_excluded": auto}
     finally:
         prev = client["status"] if client["status"] != "mapping" else "new"
         await sb("PATCH", "wa_clients", params={"id": f"eq.{req.client_id}"}, json={"status": prev})
@@ -522,19 +576,58 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
     # Full page markdown, no "pruning" content filter: the filter dropped exactly the useful facts (hour lists, price
     # tables, short FAQ answers) and kept generic prose, so the assistant could only point to the page. Boilerplate is
     # removed structurally instead (tags + selectors below, link-only / repeated / cookie lines in chunking.clean_markdown).
-    md_gen = DefaultMarkdownGenerator()
-    run_cfg = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        markdown_generator=md_gen,
-        excluded_tags=["nav", "footer", "header", "aside", "script", "style", "form", "noscript"],
-        excluded_selector=EXCLUDED_SELECTOR,
-        js_code=EXPAND_JS,                 # open accordions / <details> / tabs so their text is in the page
-        delay_before_return_html=0.8,
-        remove_overlay_elements=True,
-        page_timeout=45000,
-        word_count_threshold=1,            # keep short lines: "Check-in: 15:00", "Doppia 120 €"
-    )
+    def make_cfg(expand: bool):
+        return CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,
+            markdown_generator=DefaultMarkdownGenerator(),
+            excluded_tags=list(EXCLUDED_TAGS),
+            excluded_selector=EXCLUDED_SELECTOR,
+            js_code=EXPAND_JS if expand else None,  # open accordions / <details> / tabs, never links or forms
+            wait_until="load",                       # full load before anything runs or is read
+            delay_before_return_html=1.2 if expand else 0.5,  # let the page settle after expanding
+            remove_overlay_elements=True,
+            page_timeout=45000,
+            word_count_threshold=1,                  # keep short lines: "Check-in: 15:00", "Doppia 120 €"
+        )
+
+    cfg_expand, cfg_plain = make_cfg(True), make_cfg(False)
     browser_cfg = BrowserConfig(headless=True, verbose=False, text_mode=True)
+    throttle = Throttle(client.get("crawl_rps"))
+    serial = asyncio.Lock()  # when the site pushes back, one request at a time
+
+    async def fetch(u: str):
+        """Browser fetch with pacing, retries and backoff; navigation errors → read without expanding; repeated
+        'blocked' / empty answers → plain HTTP as a last resort. Returns (result, None) or (None, error)."""
+        last = "fetch failed"
+        cfg = cfg_expand
+        for attempt in range(3):
+            if attempt:
+                await asyncio.sleep(RETRY_BACKOFF[attempt] * throttle.slow)
+            async with (serial if throttle.slow > 1 else contextlib.nullcontext()):
+                await throttle.wait()
+                try:
+                    res = await crawler.arun(url=u, config=cfg)
+                    err = None if res.success or getattr(res, "status_code", None) in (404, 410) else (res.error_message or "fetch failed")
+                except Exception as e:  # noqa: BLE001
+                    res, err = None, str(e) or type(e).__name__
+            if not err:
+                return res, None
+            last = err
+            if NAVIGATING.search(err):
+                log.info("crawl retry job=%s url=%s: page navigated while reading, retrying without expanding", job_id, u)
+                cfg = cfg_plain
+            elif BLOCKED.search(err):
+                throttle.backoff()
+                log.info("crawl retry job=%s url=%s: %s → slowing down (x%.0f)", job_id, u, err.splitlines()[0][:120], throttle.slow)
+                if attempt >= 1:
+                    cfg = cfg_plain
+            elif attempt >= 1:
+                cfg = cfg_plain
+        res = await http_fallback(u)
+        if res:
+            log.info("crawl page via HTTP fallback job=%s url=%s (browser: %s)", job_id, u, last.splitlines()[0][:120])
+            return res, None
+        return None, last
 
     def summary_text() -> str:
         parts = [f"{counts['new']} nuove", f"{counts['updated']} aggiornate", f"{counts['unchanged']} invariate"]
@@ -575,15 +668,18 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
                 was_indexed = bool(prev and (prev.get("status") in ("ok", "pending") or (prev.get("chunk_count") or 0) > 0))
                 try:
                     await sb("PATCH", "wa_crawl_jobs", params={"id": f"eq.{job_id}"}, json={"current_url": u})
-                    res = await crawler.arun(url=u, config=run_cfg)
+                    res, ferr = await fetch(u)
+                    if ferr:
+                        raise RuntimeError(ferr)
                     status_code = getattr(res, "status_code", None)
-                    if not res.success and status_code not in (404, 410):
-                        raise RuntimeError(res.error_message or "fetch failed")
                     md_obj = res.markdown
                     # Crawl4AI ≥0.5 returns a MarkdownGenerationResult; older returns str. Always the full markdown.
                     md = getattr(md_obj, "raw_markdown", None) or str(md_obj or "")
                     title = (res.metadata or {}).get("title") or ""
                     not_found = looks_not_found(title, md, status_code)
+                    if not not_found and was_indexed and len(md.split()) < 20:
+                        # an indexed page that suddenly comes back (almost) empty is a temporary problem, not new content
+                        raise RuntimeError("Pagina quasi vuota rispetto alla versione indicizzata (possibile blocco temporaneo)")
                     if not_found:
                         if was_indexed:
                             await gone(u, title, not_found)
@@ -624,20 +720,32 @@ async def run_crawl(client: dict, job_id: str, urls: list[str], *, trigger: str 
                     reasons[reason.splitlines()[0][:200]] += 1
                     log.warning("crawl page FAILED job=%s url=%s error=%s", job_id, u, reason[:500])
                     try:
-                        await upsert_page(cid, u, {"status": "failed", "error": reason[:300], "last_crawled_at": now()})
+                        if was_indexed:
+                            # keep the indexed content and its chunks active: only record the failed attempt
+                            await upsert_page(cid, u, {"last_error": reason[:300], "last_failed_at": now()})
+                        else:
+                            await upsert_page(cid, u, {"status": "failed", "error": reason[:300], "last_error": reason[:300], "last_failed_at": now(), "last_crawled_at": now()})
                     except Exception as e2:  # noqa: BLE001
                         log.error("could not save page error job=%s url=%s: %s", job_id, u, e2)
 
             await asyncio.gather(*(one(u) for u in urls))
         elapsed = time.time() - t0
         restore = "paused" if prev_status == "paused" else "ready"
+        if errors and done and errors >= done:
+            top, n = reasons.most_common(1)[0]
+            msg = f"{errors} pagine su {errors + done} non riuscite: il contenuto già indicizzato resta attivo. Motivo principale ({n}/{errors}): {top}"
+            log.error("crawl END job=%s status=error (majority failed) done=%d errors=%d in %.1fs: %s", job_id, done, errors, elapsed, msg)
+            await patch_job(job_id, {"status": "error", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, "error": msg[:500], **count_fields()})
+            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": restore, "last_crawl_at": now()})
+            return {"status": "error", "error": msg, "summary": summary_text()}
         if done == 0 and errors > 0:
             top, n = reasons.most_common(1)[0] if reasons else ("errore sconosciuto", errors)
             msg = f"Tutte le {errors} pagine sono fallite. Motivo principale ({n}/{errors}): {top}"
             log.error("crawl END job=%s status=error done=0 errors=%d in %.1fs: %s", job_id, errors, elapsed, msg)
             await patch_job(job_id, {"status": "error", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, "error": msg[:500], **count_fields()})
-            # automatic re-crawls keep the bot running on the previous content; manual crawls flag the client
-            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": "error" if trigger == "manual" else (prev_status if prev_status not in ("crawling", "mapping") else restore)})
+            # the previous content stays active: the client keeps answering; manual crawls of a new client are flagged
+            had_content = any((r.get("chunk_count") or 0) > 0 for r in existing_rows)
+            await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": restore if had_content or trigger != "manual" else "error"})
             return {"status": "error", "error": msg, "summary": summary_text()}
         await patch_job(job_id, {"status": "done", "finished_at": now(), "current_url": None, "done_count": done, "error_count": errors, **count_fields()})
         await sb("PATCH", "wa_clients", params={"id": f"eq.{cid}"}, json={"status": restore, "last_crawl_at": now()})
@@ -696,9 +804,13 @@ async def recrawl_client(cid: str, trigger: str = "scheduled") -> dict:
     try:
         inc, exc = client_rules(client)
         root, mapped = await map_urls(client["domain"])
-        allowed = [u for u in mapped if allowed_by_rules(u, inc, exc)]
-        pages = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "kind": "eq.page", "select": "url,status,enabled"}) or []
-        known = [p for p in pages if p["url"].startswith("http") and allowed_by_rules(p["url"], inc, exc)]
+        allowed = [u for u in mapped if allowed_by_rules(u, inc, exc) and not excluded_reason(u, inc)]
+        pages = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "kind": "eq.page", "select": "id,url,status,enabled"}) or []
+        for p in pages:  # service pages indexed in the past: switched off with the reason, nothing deleted
+            reason = p["url"].startswith("http") and p.get("enabled") and excluded_reason(p["url"], inc)
+            if reason:
+                await sb("PATCH", "wa_pages", params={"id": f"eq.{p['id']}"}, json={"enabled": False, "status": "excluded", "error": f"Esclusa automaticamente: {reason}"})
+        known = [p for p in pages if p["url"].startswith("http") and allowed_by_rules(p["url"], inc, exc) and not excluded_reason(p["url"], inc)]
         live_known = [p for p in known if p.get("status") in ("ok", "pending", "empty", "failed")]
         mapped_set = set(allowed)
         orphans = {p["url"] for p in live_known if p["url"] not in mapped_set}
@@ -786,6 +898,60 @@ def extract_anchor_map(html: str) -> dict[str, str]:
 
 EXTRACT_VERSION = "2"  # full markdown + expanded accordions (see run_crawl)
 
+EXCLUDED_TAGS = ("nav", "footer", "header", "aside", "script", "style", "form", "noscript")
+RETRY_BACKOFF = (0, 3, 8)  # seconds before attempt 1, 2, 3 (multiplied when the site pushes back)
+NAVIGATING = re.compile(r"navigat|execution context was destroyed|frame was detached|target closed", re.I)
+BLOCKED = re.compile(r"anti-?bot|blocked|structural|no <body>|captcha|access denied|forbidden|\b403\b|\b429\b|too many requests", re.I)
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+
+
+class Throttle:
+    """Polite pacing for one site: at most `rps` request starts per second (wa_clients.crawl_rps, default 1),
+    slowed down further (x2 … x8) when the site answers with blocks or empty pages."""
+
+    def __init__(self, rps) -> None:
+        try:
+            rps = float(rps)
+        except (TypeError, ValueError):
+            rps = 1.0
+        self.interval = 1.0 / min(10.0, max(0.1, rps or 1.0))
+        self.slow = 1.0
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        async with self._lock:
+            t = max(time.monotonic(), self._next)
+            self._next = t + self.interval * self.slow
+        await asyncio.sleep(max(0.0, t - time.monotonic()))
+
+    def backoff(self) -> None:
+        self.slow = min(8.0, self.slow * 2)
+
+
+async def http_fallback(url: str):
+    """Last resort without a browser: plain GET + the same cleaning and markdown as the browser path.
+    Returns an object shaped like a Crawl4AI result, or None."""
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers={"User-Agent": BROWSER_UA, "Accept-Language": "it,en;q=0.8"}) as c:
+            r = await c.get(url)
+        if r.status_code != 200 or "text/html" not in r.headers.get("content-type", "") or len(r.text) < 200:
+            return None
+        import crawl4ai.content_scraping_strategy as css
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+        from bs4 import BeautifulSoup
+
+        scraper = getattr(css, "LXMLWebScrapingStrategy", None) or getattr(css, "WebScrapingStrategy")
+        scraped = scraper().scrap(str(r.url), r.text, excluded_tags=list(EXCLUDED_TAGS), excluded_selector=EXCLUDED_SELECTOR, word_count_threshold=1)
+        cleaned = scraped.cleaned_html if hasattr(scraped, "cleaned_html") else scraped["cleaned_html"]
+        md = DefaultMarkdownGenerator().generate_markdown(cleaned, base_url=str(r.url))
+        title_tag = BeautifulSoup(r.text[:20000], "html.parser").title
+        return SimpleNamespace(success=True, status_code=200, html=r.text, markdown=md, redirected_url=str(r.url),
+                               metadata={"title": title_tag.get_text(strip=True) if title_tag else ""})
+    except Exception as e:  # noqa: BLE001
+        log.info("HTTP fallback failed url=%s: %s", url, e)
+        return None
+
 # Boilerplate that is not in <nav>/<footer>/<header>: cookie / consent banners, breadcrumbs, share bars, skip links
 EXCLUDED_SELECTOR = ", ".join([
     "[id*='cookie' i]", "[class*='cookie' i]", "[id*='consent' i]", "[class*='consent' i]", "[class*='gdpr' i]",
@@ -796,21 +962,51 @@ EXCLUDED_SELECTOR = ", ".join([
 # so nothing navigates away). Hidden panels that are already in the DOM are captured anyway; this covers lazy ones.
 EXPAND_JS = """
 (() => {
-  document.querySelectorAll('details').forEach(d => { d.open = true; });
-  const toggles = document.querySelectorAll('button[aria-expanded="false"], [role="button"][aria-expanded="false"], [role="tab"]:not([aria-selected="true"]), .accordion-button.collapsed, .elementor-tab-title, .vc_tta-tab > a[href^="#"]');
-  let n = 0;
-  toggles.forEach(el => { if (n++ < 60 && !el.closest('nav, header, footer')) { try { el.click(); } catch (e) {} } });
-  document.querySelectorAll('[hidden], .collapse:not(.show), [aria-hidden="true"]').forEach(el => {
-    if (!el.closest('nav, header, footer') && el.textContent.trim().length > 20) { el.hidden = false; el.style.display = 'block'; el.classList.add('show'); }
-  });
+  // Safety first: nothing clicked here may leave the page. Links and form submissions are blocked for the
+  // duration of the expansion, and only controls that open content in place are touched.
+  const stop = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
+  const guard = (e) => { if (e.target.closest && e.target.closest('a[href]')) stop(e); };
+  document.addEventListener('click', guard, true);
+  document.addEventListener('submit', stop, true);
+  const sub = HTMLFormElement.prototype.submit; HTMLFormElement.prototype.submit = function () {};
+  try {
+    document.querySelectorAll('details:not([open])').forEach(d => { d.open = true; });
+    const safe = (el) => !el.closest('a[href], form, nav, header, footer')
+      && !el.matches('a, input, [type="submit"], [href], [onclick*="location"], [onclick*="href"], [data-href], [data-url]');
+    const toggles = document.querySelectorAll('button[aria-expanded="false"], [role="button"][aria-expanded="false"], [role="tab"][aria-controls]:not([aria-selected="true"])');
+    let n = 0;
+    toggles.forEach(el => { if (n < 60 && safe(el)) { n++; try { el.click(); } catch (e) {} } });
+    // panels already in the DOM but hidden by CSS: make them readable without clicking anything
+    document.querySelectorAll('[role="tabpanel"], .collapse:not(.show), .accordion-collapse, [aria-hidden="true"]').forEach(el => {
+      if (!el.closest('nav, header, footer') && el.textContent.trim().length > 20) { el.hidden = false; el.style.display = 'block'; el.classList.add('show'); }
+    });
+  } finally {
+    setTimeout(() => {
+      document.removeEventListener('click', guard, true);
+      document.removeEventListener('submit', stop, true);
+      HTMLFormElement.prototype.submit = sub;
+    }, 1500);
+  }
 })();
 """
+
+
+PAGE_EXT_FIELDS = {"last_error", "last_failed_at"}  # migration 0010
 
 
 async def upsert_page(cid: str, url: str, fields: dict) -> dict:
     if not url.startswith("http"):  # safety net: manual documents/FAQ/texts (wisi://…) are never written by the crawler
         raise RuntimeError(f"URL non valido per il crawler: {url[:80]}")
-    rows = await sb("POST", "wa_pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **fields}, prefer="resolution=merge-duplicates,return=representation")
+    try:
+        rows = await sb("POST", "wa_pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **fields}, prefer="resolution=merge-duplicates,return=representation")
+    except RuntimeError as e:
+        base = {k: v for k, v in fields.items() if k not in PAGE_EXT_FIELDS}
+        if base == fields or ("column" not in str(e).lower() and "PGRST204" not in str(e)):
+            raise
+        log.warning("wa_pages: last_error / last_failed_at missing (apply migration 0010_crawl_robustness.sql)")
+        if "last_error" in fields and "error" not in base and "status" not in base:
+            base["error"] = f"Ultimo tentativo fallito: {fields['last_error']}"[:300]
+        rows = await sb("POST", "wa_pages", params={"on_conflict": "client_id,url"}, json={"client_id": cid, "url": url, "kind": "page", **base}, prefer="resolution=merge-duplicates,return=representation")
     return rows[0]
 
 
@@ -831,7 +1027,7 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
     h = hashlib.sha256(f"{EXTRACT_VERSION}:{CHUNKER_VERSION}:{text}".encode()).hexdigest()[:32]
     existing = await sb("GET", "wa_pages", params={"client_id": f"eq.{cid}", "url": f"eq.{url}", "select": "id,content_hash"})
     if existing and existing[0].get("content_hash") == h:
-        await upsert_page(cid, url, {"title": title, "status": "ok", "error": None, "last_crawled_at": now()})
+        await upsert_page(cid, url, {"title": title, "status": "ok", "error": None, "last_error": None, "last_crawled_at": now()})
         return "unchanged"  # same content fingerprint → skip re-embedding (saves money)
 
     page = await upsert_page(cid, url, {"title": title, "status": "pending", "error": None})
@@ -847,7 +1043,7 @@ async def index_page(cid: str, url: str, title: str, md: str, anchors: dict[str,
     await sb("DELETE", "wa_chunks", params={"page_id": f"eq.{page['id']}"})
     for i in range(0, len(rows), 50):
         await sb("POST", "wa_chunks", json=rows[i : i + 50])
-    await upsert_page(cid, url, {"status": "ok", "chunk_count": len(rows), "word_count": words, "content_hash": h, "error": None, "last_crawled_at": now()})
+    await upsert_page(cid, url, {"status": "ok", "chunk_count": len(rows), "word_count": words, "content_hash": h, "error": None, "last_error": None, "last_crawled_at": now()})
     return "updated" if existing and existing[0].get("content_hash") else "new"
 
 
