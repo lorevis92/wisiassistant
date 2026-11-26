@@ -200,6 +200,25 @@ poi il link; mai il solo link.
   parte delle pagine fallisce finisce in errore, non "completato".
 - Pagine indicizzate: filtro per stato (OK, con errore, escluse, vuote) e "Riprova tutte quelle in errore".
 
+## Velocità delle risposte
+
+- **Risposta a flusso**: il widget e la pagina chat chiamano `chat` con `stream: true` e ricevono eventi
+  `text/event-stream` (`meta` → `delta`… → `done`, oppure `error`). I puntini restano fino alla prima parola, poi il
+  testo cresce in tempo reale; link e grassetto incompleti restano nascosti finché non sono chiusi. Se la risposta si
+  interrompe a metà, il testo già arrivato resta con un avviso (e viene salvato). Telegram, WhatsApp e i widget vecchi
+  senza `stream` ricevono ancora un'unica risposta JSON.
+- **Tempi per ogni risposta** in `wa_messages.retrieval.timings` (nessuna migrazione: è dentro il JSON già esistente),
+  visibili in *Perché ha risposto così*: avvio a freddo, configurazione, conversazione, riscrittura, embedding, ricerca,
+  pagine intere, prima parola del modello, generazione, con la regione della funzione (`SB_REGION`). Nella scheda
+  *Prova* c'è anche il tempo misurato dal browser (rete e avvio della piattaforma compresi).
+- **Meno attesa**: riscrittura della domanda solo per le domande che dipendono dalla chat ("e il sabato?"), con il
+  modello più piccolo dello stesso provider e un limite di 2 s; embedding avviato subito, in parallelo con rate limit,
+  conversazione e cronologia; contesto più snello (pagina intera solo quando è chiaramente la fonte, frammenti deboli
+  esclusi, massimo ~12k caratteri); ragionamento minimo consentito da ogni modello; configurazione del cliente in cache
+  per 30 s; il messaggio del bot viene salvato dopo averlo inviato al visitatore.
+- In *Impostazioni → Intelligenza artificiale* i modelli sono raggruppati per velocità (veloci, medi, lenti).
+  Predefinito consigliato: Claude Haiku 5.5.
+
 ## Sviluppo locale
 ```bash
 npm install

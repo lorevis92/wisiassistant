@@ -6,7 +6,7 @@ import Appearance from './Appearance'
 import { resolveAvatar } from '../../../widget/avatars.js'
 import { DEFAULT_DISCLAIMER } from '../../../widget/chat-ui.js'
 import { StatusBadge, Toast, useToast } from '../../components/ui'
-import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS } from '../../lib/models'
+import { MODELS, modelKey, supportsTemperature, CHANNELS, LANGS, SPEEDS, modelSpeed, DEFAULT_MODEL, modelLabel } from '../../lib/models'
 
 const DEFAULT_INSTRUCTIONS = `Sei l'assistente virtuale di {{nome}}. Rispondi in modo cortese, chiaro e conciso, nella lingua in cui scrive l'utente.
 Usa SOLO le informazioni fornite nel contesto (pagine del sito e documenti del cliente). Se la risposta non è nel contesto, dillo con onestà.
@@ -122,9 +122,26 @@ export default function Settings({ client, reload }) {
           <div className="card-title">Intelligenza artificiale</div>
           <div className="field"><label className="label">Modello</label>
             <select className="select" value={f.model} onChange={(e) => set('model', e.target.value)}>
-              {MODELS.map((m) => <option key={modelKey(m)} value={modelKey(m)}>{m.label} — {m.tier}</option>)}
+              {!MODELS.some((m) => modelKey(m) === f.model) && <option value={f.model}>{f.model}</option>}
+              {Object.entries(SPEEDS).map(([sp, info]) => (
+                <optgroup key={sp} label={`${info.label}: ${info.hint.split(':')[0]}`}>
+                  {MODELS.filter((m) => m.speed === sp).map((m) => (
+                    <option key={modelKey(m)} value={modelKey(m)}>{m.label} — {m.tier}{modelKey(m) === DEFAULT_MODEL ? ' (consigliato)' : ''}</option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
-            <div className="hint">Ogni provider richiede la propria API key nei secrets di Supabase (vedi README). Puoi cambiare modello in qualsiasi momento.</div>
+            {(() => {
+              const sp = modelSpeed(f.model)
+              const info = sp && SPEEDS[sp]
+              return (
+                <div className="hint">
+                  {info && <><span className={`badge ${info.badge}`} style={{ marginRight: 6 }}>{info.label}</span>{info.hint.charAt(0).toUpperCase() + info.hint.slice(1)}. </>}
+                  {sp !== 'fast' && <>Per risposte più rapide prova {modelLabel(DEFAULT_MODEL)}, il predefinito consigliato. </>}
+                  Ogni provider richiede la propria API key nei secrets di Supabase (vedi README). Puoi cambiare modello in qualsiasi momento.
+                </div>
+              )
+            })()}
           </div>
           <div className="grid2">
             <div className="field"><label className="label">Lingua risposte</label>

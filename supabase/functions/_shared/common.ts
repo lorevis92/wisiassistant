@@ -5,7 +5,9 @@ export const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 export const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 export const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 
-export const admin = () => createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
+// one service client per isolate: warm requests reuse it (and its HTTP connections) instead of building a new one
+let _admin: any = null
+export const admin = () => (_admin ??= createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } }))
 
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -82,11 +84,80 @@ export async function embed(texts: string[]): Promise<number[][]> {
   return out
 }
 
-// ------------------------------------------------------------------ LLM (multi-provider)
+// ------------------------------------------------------------------ LLM (multi-provider, streaming)
 export type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
-export type LLMResult = { text: string; tokens_in?: number; tokens_out?: number }
+export type LLMResult = { text: string; tokens_in?: number; tokens_out?: number; ttft_ms?: number; ms?: number }
+export type LLMOpts = {
+  temperature?: number
+  max_tokens?: number
+  /** least reasoning the model allows (chat answers, query rewrite): see anthropicLatency / openaiEffort / googleThinking */
+  fast?: boolean
+  /** abort the whole call after this many ms */
+  timeout_ms?: number
+  /** abort if the first token has not arrived after this many ms */
+  first_token_timeout_ms?: number
+}
 
-export async function llm(modelKey: string, messages: Msg[], opts: { temperature?: number; max_tokens?: number } = {}): Promise<LLMResult> {
+/** OpenAI reasoning models: GPT-5 family (except the non-reasoning *-chat variants) and the o-series. Keep in sync with src/lib/models.js. */
+export const isOpenAIReasoning = (model: string) => (/^gpt-5/.test(model) && !/-chat/.test(model)) || /^o\d/.test(model)
+
+/**
+ * Smallest, fastest model of the same provider (same API key), for the query rewrite.
+ * The provider of the client's model is used so no extra secret is needed.
+ */
+export function fastModelFor(modelKey: string) {
+  const provider = modelKey.split('/')[0]
+  const fast: Record<string, string> = {
+    anthropic: 'anthropic/claude-haiku-5-5',
+    openai: 'openai/gpt-5-nano',
+    google: 'google/gemini-2.5-flash-lite',
+    mistral: 'mistral/mistral-small-latest',
+    xai: 'xai/grok-4-fast-non-reasoning',
+    groq: 'groq/llama-3.1-8b-instant',
+  }
+  return fast[provider] || modelKey
+}
+
+/**
+ * Least reasoning each model accepts. Reasoning ("thinking") happens before the first word: for short support
+ * answers grounded in the given context it adds seconds and no quality.
+ *  - Claude 5 family: effort low; thinking off where the model allows it (Haiku 5.x, Sonnet 5, Opus 5: `disabled`;
+ *    Sonnet 5.5+: `between_tools`, i.e. no thinking without tools; Opus 5.5 / Fable: always on, effort low is the minimum)
+ *  - OpenAI reasoning models: reasoning_effort minimal (gpt-5) / none (gpt-5.1+) / low (o-series)
+ *  - Gemini 2.5 Flash: thinking budget 0; 2.5 Pro: 128 (its minimum); Gemini 3: thinking level low
+ */
+function anthropicLatency(model: string) {
+  const m = model.match(/^claude-(haiku|sonnet|opus|fable|mythos)-(\d+)(?:-(\d+))?/)
+  if (!m || Number(m[2]) < 5) return {}
+  const family = m[1]
+  const minor = Number(m[3] || 0)
+  const out: any = { output_config: { effort: 'low' } }
+  if (family === 'haiku' || (family === 'opus' && minor === 0) || (family === 'sonnet' && minor === 0)) out.thinking = { type: 'disabled' }
+  else if (family === 'sonnet') out.thinking = { type: 'between_tools' }
+  return out
+}
+function openaiEffort(model: string) {
+  if (/^gpt-5(-|$)/.test(model)) return 'minimal'
+  if (/^gpt-5\.\d/.test(model)) return 'none'
+  return 'low'
+}
+function googleThinking(model: string) {
+  if (/gemini-2\.5-.*flash/.test(model)) return { thinkingBudget: 0 }
+  if (/gemini-2\.5-pro/.test(model)) return { thinkingBudget: 128 }
+  if (/gemini-3/.test(model)) return { thinkingLevel: 'low' }
+  return null
+}
+
+const need = (k: string) => { const v = Deno.env.get(k); if (!v) throw new Error(`${k} mancante nei secrets di Supabase`); return v }
+const COMPAT: Record<string, { url: string; key: string }> = {
+  openai: { url: 'https://api.openai.com/v1/chat/completions', key: 'OPENAI_API_KEY' },
+  mistral: { url: 'https://api.mistral.ai/v1/chat/completions', key: 'MISTRAL_API_KEY' },
+  xai: { url: 'https://api.x.ai/v1/chat/completions', key: 'XAI_API_KEY' },
+  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', key: 'GROQ_API_KEY' },
+}
+
+/** Builds the provider request. `stream` selects the streaming endpoint / flag. */
+export function buildRequest(modelKey: string, messages: Msg[], opts: LLMOpts, stream: boolean) {
   const [provider, ...rest] = modelKey.split('/')
   const model = rest.join('/')
   const temperature = opts.temperature ?? 0.2
@@ -94,43 +165,26 @@ export async function llm(modelKey: string, messages: Msg[], opts: { temperature
   const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
   const chat = messages.filter((m) => m.role !== 'system')
 
-  const need = (k: string) => { const v = Deno.env.get(k); if (!v) throw new Error(`${k} mancante nei secrets di Supabase`); return v }
-
   if (provider === 'anthropic') {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': need('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' },
-      // recent Claude models reject `temperature` ("deprecated for this model"): never send it to Anthropic
-      body: JSON.stringify({ model, max_tokens, system, messages: chat }),
-    })
-    const j = await r.json()
-    if (!r.ok) throw new Error(j.error?.message || 'Anthropic error')
-    return { text: (j.content || []).map((c: any) => c.text || '').join(''), tokens_in: j.usage?.input_tokens, tokens_out: j.usage?.output_tokens }
+    // recent Claude models reject `temperature` ("deprecated for this model"): never send it to Anthropic
+    const body: any = { model, max_tokens, system, messages: chat, ...(opts.fast ? anthropicLatency(model) : {}) }
+    if (stream) body.stream = true
+    return { provider, url: 'https://api.anthropic.com/v1/messages', headers: { 'Content-Type': 'application/json', 'x-api-key': need('ANTHROPIC_API_KEY'), 'anthropic-version': '2023-06-01' }, body }
   }
 
   if (provider === 'google') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${need('GOOGLE_API_KEY')}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: system ? { parts: [{ text: system }] } : undefined,
-        contents: chat.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
-        generationConfig: { temperature, maxOutputTokens: max_tokens },
-      }),
-    })
-    const j = await r.json()
-    if (!r.ok) throw new Error(j.error?.message || 'Google error')
-    const text = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') || ''
-    return { text, tokens_in: j.usageMetadata?.promptTokenCount, tokens_out: j.usageMetadata?.candidatesTokenCount }
+    const thinking = opts.fast ? googleThinking(model) : null
+    const body = {
+      system_instruction: system ? { parts: [{ text: system }] } : undefined,
+      contents: chat.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+      generationConfig: { temperature, maxOutputTokens: max_tokens, ...(thinking ? { thinkingConfig: thinking } : {}) },
+    }
+    const method = stream ? 'streamGenerateContent?alt=sse&' : 'generateContent?'
+    return { provider, url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}key=${need('GOOGLE_API_KEY')}`, headers: { 'Content-Type': 'application/json' }, body }
   }
 
   // OpenAI-compatible providers
-  const compat: Record<string, { url: string; key: string }> = {
-    openai: { url: 'https://api.openai.com/v1/chat/completions', key: 'OPENAI_API_KEY' },
-    mistral: { url: 'https://api.mistral.ai/v1/chat/completions', key: 'MISTRAL_API_KEY' },
-    xai: { url: 'https://api.x.ai/v1/chat/completions', key: 'XAI_API_KEY' },
-    groq: { url: 'https://api.groq.com/openai/v1/chat/completions', key: 'GROQ_API_KEY' },
-  }
-  const c = compat[provider]
+  const c = COMPAT[provider]
   if (!c) throw new Error(`Provider sconosciuto: ${provider}`)
   const body: any = { model, messages: [...(system ? [{ role: 'system', content: system }] : []), ...chat], temperature }
   // newer OpenAI models reject max_tokens → use max_completion_tokens
@@ -139,17 +193,126 @@ export async function llm(modelKey: string, messages: Msg[], opts: { temperature
     // reasoning models reject a non-default temperature, and reasoning tokens count against
     // max_completion_tokens: lowest effort (fast support replies) + headroom so the answer is never empty
     delete body.temperature
-    body.reasoning_effort = /^gpt-5(-|$)/.test(model) ? 'minimal' : 'low'
+    body.reasoning_effort = openaiEffort(model)
     body.max_completion_tokens = Math.max(max_tokens, 2000)
   }
-  const r = await fetch(c.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${need(c.key)}` }, body: JSON.stringify(body) })
-  const j = await r.json()
-  if (!r.ok) throw new Error(j.error?.message || `${provider} error`)
-  return { text: j.choices?.[0]?.message?.content || '', tokens_in: j.usage?.prompt_tokens, tokens_out: j.usage?.completion_tokens }
+  if (stream) {
+    body.stream = true
+    if (provider === 'openai') body.stream_options = { include_usage: true }
+  }
+  return { provider, url: c.url, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${need(c.key)}` }, body }
 }
 
-/** OpenAI reasoning models: GPT-5 family (except the non-reasoning *-chat variants) and the o-series. Keep in sync with src/lib/models.js. */
-export const isOpenAIReasoning = (model: string) => (/^gpt-5/.test(model) && !/-chat/.test(model)) || /^o\d/.test(model)
+function apiError(provider: string, status: number, j: any) {
+  const msg = j?.error?.message || j?.message || (Array.isArray(j) ? j[0]?.error?.message : '') || `${provider} error (${status})`
+  return Object.assign(new Error(msg), { status: status >= 500 ? 502 : status })
+}
+
+/** Non-streaming call (reports, query rewrite). */
+export async function llm(modelKey: string, messages: Msg[], opts: LLMOpts = {}): Promise<LLMResult> {
+  const r = buildRequest(modelKey, messages, opts, false)
+  const t0 = performance.now()
+  const res = await fetch(r.url, { method: 'POST', headers: r.headers, body: JSON.stringify(r.body), signal: opts.timeout_ms ? AbortSignal.timeout(opts.timeout_ms) : undefined })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok) throw apiError(r.provider, res.status, j)
+  const ms = Math.round(performance.now() - t0)
+  if (r.provider === 'anthropic') return { text: (j.content || []).map((c: any) => (c.type === 'text' ? c.text : '')).join(''), tokens_in: j.usage?.input_tokens, tokens_out: j.usage?.output_tokens, ms }
+  if (r.provider === 'google') return { text: j.candidates?.[0]?.content?.parts?.filter((p: any) => !p.thought).map((p: any) => p.text || '').join('') || '', tokens_in: j.usageMetadata?.promptTokenCount, tokens_out: j.usageMetadata?.candidatesTokenCount, ms }
+  return { text: j.choices?.[0]?.message?.content || '', tokens_in: j.usage?.prompt_tokens, tokens_out: j.usage?.completion_tokens, ms }
+}
+
+/** Server-sent events → the `data:` payload of each event (JSON-parsed; '[DONE]' and comments skipped). */
+export async function* sseData(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+      let i
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        const data = raw.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n')
+        if (!data || data === '[DONE]') continue
+        try { yield JSON.parse(data) } catch { /* partial / non-JSON keep-alive */ }
+      }
+    }
+  } finally { reader.releaseLock() }
+}
+
+/**
+ * Streaming call: `onDelta` gets each piece of text as soon as the provider sends it.
+ * Returns the full text, usage, time to first token (ttft_ms) and total time (ms), measured from the request start.
+ * An error after some text has arrived is thrown with `partial` (the text so far), so the caller can keep it.
+ */
+export async function llmStream(modelKey: string, messages: Msg[], opts: LLMOpts = {}, onDelta?: (t: string) => void): Promise<LLMResult> {
+  const r = buildRequest(modelKey, messages, opts, true)
+  const ctrl = new AbortController()
+  const total = opts.timeout_ms ? setTimeout(() => ctrl.abort(new Error('Il modello non ha completato la risposta in tempo')), opts.timeout_ms) : null
+  const first = opts.first_token_timeout_ms ? setTimeout(() => ctrl.abort(new Error('Il modello non ha iniziato a rispondere in tempo')), opts.first_token_timeout_ms) : null
+  const t0 = performance.now()
+  let text = ''
+  let ttft: number | undefined
+  let tokens_in: number | undefined
+  let tokens_out: number | undefined
+  const push = (t: string) => {
+    if (!t) return
+    if (ttft === undefined) { ttft = Math.round(performance.now() - t0); if (first) clearTimeout(first) }
+    text += t
+    onDelta?.(t)
+  }
+  try {
+    const res = await fetch(r.url, { method: 'POST', headers: r.headers, body: JSON.stringify(r.body), signal: ctrl.signal })
+    if (!res.ok || !res.body) throw apiError(r.provider, res.status, await res.json().catch(() => ({})))
+    for await (const ev of sseData(res.body)) {
+      if (r.provider === 'anthropic') {
+        if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') push(ev.delta.text)
+        else if (ev.type === 'message_start') tokens_in = ev.message?.usage?.input_tokens
+        else if (ev.type === 'message_delta') tokens_out = ev.usage?.output_tokens ?? tokens_out
+        else if (ev.type === 'error') throw new Error(ev.error?.message || 'Anthropic error')
+      } else if (r.provider === 'google') {
+        if (ev.error) throw new Error(ev.error.message || 'Google error')
+        for (const p of ev.candidates?.[0]?.content?.parts || []) if (!p.thought) push(p.text || '')
+        if (ev.usageMetadata) { tokens_in = ev.usageMetadata.promptTokenCount; tokens_out = ev.usageMetadata.candidatesTokenCount }
+      } else {
+        if (ev.error) throw new Error(ev.error.message || `${r.provider} error`)
+        push(ev.choices?.[0]?.delta?.content || '')
+        const u = ev.usage || ev.x_groq?.usage
+        if (u) { tokens_in = u.prompt_tokens; tokens_out = u.completion_tokens }
+      }
+    }
+  } catch (e) {
+    const reason = ctrl.signal.aborted && ctrl.signal.reason instanceof Error ? ctrl.signal.reason : e
+    throw Object.assign(reason as Error, { partial: text, ttft_ms: ttft })
+  } finally {
+    if (total) clearTimeout(total)
+    if (first) clearTimeout(first)
+  }
+  return { text, tokens_in, tokens_out, ttft_ms: ttft, ms: Math.round(performance.now() - t0) }
+}
+
+// ------------------------------------------------------------------ TIMINGS
+/**
+ * Per-answer timings shown in "Perché ha risposto così": every step with its start (ms from the request start) and
+ * duration, so overlapping (parallel) steps read as a waterfall.
+ */
+export class Timer {
+  t0: number
+  steps: { key: string; start: number; ms: number }[] = []
+  info: Record<string, unknown> = {}
+  constructor(t0 = performance.now()) { this.t0 = t0 }
+  async time<T>(key: string, p: Promise<T> | (() => Promise<T>)): Promise<T> {
+    const s = performance.now()
+    try { return await (typeof p === 'function' ? p() : p) } finally { this.add(key, s, performance.now()) }
+  }
+  add(key: string, start: number, end: number) {
+    this.steps.push({ key, start: Math.max(0, Math.round(start - this.t0)), ms: Math.max(0, Math.round(end - start)) })
+  }
+  json() { return { steps: [...this.steps].sort((a, b) => a.start - b.start), total_ms: Math.round(performance.now() - this.t0), ...this.info } }
+}
 
 // ------------------------------------------------------------------ CHUNKING (manual content; same rules as crawler/chunking.py)
 /**

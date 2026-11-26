@@ -203,6 +203,13 @@ function LivePreview({ client, widget }) {
       await new Promise((r) => setTimeout(r, 900))
       return b.mode === 'message' ? { conversation_id: 'preview', message_id: `p${Date.now()}`, content: PREVIEW_REPLY } : { ok: true }
     }
+    // preview only: imitates the streamed reply (dots for ~0.8 s, then the text growing a few words at a time)
+    api.stream = async (b, { onDelta } = {}) => {
+      await new Promise((r) => setTimeout(r, 800))
+      const parts = PREVIEW_REPLY.match(/\S+\s*/g) || [PREVIEW_REPLY]
+      for (let i = 0; i < parts.length; i += 3) { onDelta?.(parts.slice(i, i + 3).join('')); await new Promise((r) => setTimeout(r, 45)) }
+      return { conversation_id: 'preview', message_id: `p${Date.now()}`, content: PREVIEW_REPLY }
+    }
     let a, b
     const t = setTimeout(() => {
       a = mountChat(closedRef.current, { cfg, api, slug: 'preview', mode: 'preview', preview: 'closed', theme })

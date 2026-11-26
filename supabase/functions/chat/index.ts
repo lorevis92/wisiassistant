@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { admin, json, err, CORS, requireClientAccess } from '../_shared/common.ts'
+import { admin, json, err, CORS, requireClientAccess, Timer } from '../_shared/common.ts'
 import { answerQuestion } from '../_shared/answer.ts'
 import { deliverToChannel } from '../_shared/channels.ts'
 import { runMessage } from '../_shared/rag.ts'
@@ -7,7 +7,9 @@ import { runMessage } from '../_shared/rag.ts'
 /**
  * Modes (POST JSON):
  *  - config      { client_slug, channel, origin }                        → public widget config (optional domain lock, see originAllowed)
- *  - message     { client_slug, conversation_id?, content, channel, page_url, origin, lead?, external_id?, visitor_id? }
+ *  - message     { client_slug, conversation_id?, content, channel, page_url, origin, lead?, external_id?, visitor_id?, stream? }
+ *                 stream: true → text/event-stream: `meta` {conversation_id}, `delta` {text}…, `done` {message_id, content…}
+ *                 or `error` {error}. Without stream (old widgets): one JSON reply.
  *  - history     { client_slug, conversation_id }                         → full transcript (user, assistant, operator) for a saved conversation
  *  - poll        { conversation_id, after_id, client_slug? }               → operator (human) replies after the cursor only;
  *                                                                            without a cursor returns no messages, just `cursor` (latest id)
@@ -19,16 +21,25 @@ import { runMessage } from '../_shared/rag.ts'
  * The RAG pipeline lives in _shared/rag.ts (runMessage) and is reused by the channel webhooks.
  */
 
+// Function start: performance.now() counts from the isolate start, so on the first request of an isolate (cold start)
+// it is the time spent booting the runtime and loading this code.
+let served = 0
+
 Deno.serve(async (req) => {
+  const t0 = performance.now()
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  const T = new Timer(t0)
+  const cold = served++ === 0
+  T.info.cold = cold
+  if (cold) T.info.boot_ms = Math.round(t0)
   let body: any
-  try { body = await req.json() } catch { return err('JSON non valido') }
+  try { body = await T.time('request', req.json()) } catch { return err('JSON non valido') }
   const sb = admin()
 
   try {
     switch (body.mode) {
       case 'config': return await modeConfig(sb, body)
-      case 'message': return await modeMessage(sb, body)
+      case 'message': return await modeMessage(sb, body, T)
       case 'history': return await modeHistory(sb, body)
       case 'poll': return await modePoll(sb, body)
       case 'feedback': return await modeFeedback(sb, body)
@@ -39,10 +50,10 @@ Deno.serve(async (req) => {
         if (denied) return denied
         const question = String(body.question || '').trim().slice(0, 1000)
         if (!question) return err('Domanda vuota')
-        const { data: client } = await sb.from('wa_clients').select('*').eq('id', body.client_id).single()
+        const { data: client } = await T.time('setup', sb.from('wa_clients').select('*').eq('id', body.client_id).single())
         if (!client) return err('Cliente non trovato', 404)
-        const r = await answerQuestion(sb, client, question, [])
-        return json({ answer: r.answer, confident: r.confident, retrieval: r.retrieval, model: client.model })
+        const r = await answerQuestion(sb, client, question, [], { timer: T })
+        return json({ answer: r.answer, confident: r.confident, retrieval: r.retrieval, timings: r.retrieval.timings, model: client.model })
       }
       case 'human_reply': {
         const { data: c } = await sb.from('wa_conversations').select('client_id').eq('id', body.conversation_id).maybeSingle()
@@ -60,10 +71,27 @@ Deno.serve(async (req) => {
 })
 
 // ------------------------------------------------------------------ helpers
+// Client configuration cache (per isolate): config, every message and poll read the same row. Changes made in the
+// panel (model, instructions, pause…) apply within CLIENT_TTL_MS.
+const CLIENT_TTL_MS = 30_000
+const clientCache = new Map<string, { at: number; data: any }>()
+
+/** Client row by slug, from the cache when fresh (null if unknown). */
+async function getClient(sb: any, slug: string) {
+  const hit = clientCache.get(slug)
+  if (hit && Date.now() - hit.at < CLIENT_TTL_MS) return hit.data
+  const r = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
+  if (r.error) throw new Error(`Database: ${r.error.message}`)
+  if (r.data) {
+    clientCache.set(slug, { at: Date.now(), data: r.data })
+    if (clientCache.size > 500) clientCache.delete(clientCache.keys().next().value!)
+  }
+  return r.data
+}
+
 async function loadClient(sb: any, slug: string) {
   if (!slug) throw Object.assign(new Error('client_slug mancante'), { status: 400 })
-  const { data, error } = await sb.from('wa_clients').select('*').eq('slug', slug).maybeSingle()
-  if (error) throw new Error(`Database: ${error.message}`)
+  const data = await getClient(sb, slug)
   if (!data) throw Object.assign(new Error('Cliente non trovato'), { status: 404 })
   if (data.status === 'paused') throw Object.assign(new Error('Assistente in pausa'), { status: 403 })
   return data
@@ -115,7 +143,7 @@ async function loadConversation(sb: any, b: any) {
   const { data: conv } = await sb.from('wa_conversations').select('id,client_id,status').eq('id', b.conversation_id).maybeSingle()
   if (!conv) return null
   if (b.client_slug) {
-    const { data: c } = await sb.from('wa_clients').select('id').eq('slug', b.client_slug).maybeSingle()
+    const c = await getClient(sb, b.client_slug)
     if (c?.id !== conv.client_id) return null
   }
   return conv
@@ -171,9 +199,36 @@ async function modeHumanReply(sb: any, b: any) {
 }
 
 // ------------------------------------------------------------------ MESSAGE (RAG)
-async function modeMessage(sb: any, b: any) {
-  const client = await loadClient(sb, b.client_slug)
+async function modeMessage(sb: any, b: any, T: Timer) {
+  // errors found before answering (unknown client, paused, domain) stay plain JSON with their status code
+  const client = await T.time('client', loadClient(sb, b.client_slug))
   if (!originAllowed(client, b.channel || 'web', b.origin)) return err(`Dominio non autorizzato: ${hostOf(b.origin) || '(sconosciuto)'}`, 403)
-  const r = await runMessage(sb, client, b)
-  return json(r)
+  if (!b.stream) return json(await runMessage(sb, client, b, { timer: T }))
+  return sse((send) => runMessage(sb, client, b, { timer: T, onEvent: send }))
+}
+
+/**
+ * Streamed reply (text/event-stream). If the visitor closes the chat mid-answer the stream is cancelled but the work
+ * goes on (EdgeRuntime.waitUntil), so the answer is still stored and visible in the Inbox.
+ */
+function sse(run: (send: (event: string, data: unknown) => void) => Promise<unknown>) {
+  const enc = new TextEncoder()
+  let closed = false
+  let ctrl: ReadableStreamDefaultController<Uint8Array>
+  const send = (event: string, data: unknown) => {
+    if (closed) return
+    try { ctrl.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) } catch { closed = true }
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      ctrl = c
+      ctrl.enqueue(enc.encode(': ok\n\n')) // headers out at once
+      const work = run(send)
+        .catch((e) => { console.error(e); send('error', { error: (e as Error).message || 'Errore interno', status: (e as any).status || 500 }) })
+        .finally(() => { if (!closed) { closed = true; try { ctrl.close() } catch { /* already closed */ } } })
+      ;(globalThis as any).EdgeRuntime?.waitUntil?.(work)
+    },
+    cancel() { closed = true },
+  })
+  return new Response(stream, { headers: { ...CORS, 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' } })
 }

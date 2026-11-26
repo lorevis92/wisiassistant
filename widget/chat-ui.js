@@ -49,12 +49,62 @@ export function normalizeWidget(raw) {
 }
 
 export function makeApi(url, anonKey) {
-  return async (body) => {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: anonKey, Authorization: `Bearer ${anonKey}` }, body: JSON.stringify(body) })
+  const headers = { 'Content-Type': 'application/json', apikey: anonKey, Authorization: `Bearer ${anonKey}` }
+  const call = async (body) => {
+    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
     const j = await r.json().catch(() => ({}))
     if (!r.ok) throw Object.assign(new Error(j.error || 'Errore'), { status: r.status })
     return j
   }
+  call.stream = (body, handlers) => streamMessage(url, headers, body, handlers)
+  return call
+}
+
+/**
+ * Streamed message (chat function, mode 'message' + stream): server-sent events `meta` {conversation_id},
+ * `delta` {text}…, then `done` (the final reply, as the JSON reply of the non-streamed call) or `error`.
+ * Resolves at `done`. An error after some text carries `partial`. A function that does not stream yet (older
+ * deployment) answers with plain JSON: returned as is.
+ */
+async function streamMessage(url, headers, body, { onMeta, onDelta, signal } = {}) {
+  const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal })
+  if (!r.ok || !String(r.headers.get('content-type') || '').includes('text/event-stream') || !r.body) {
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw Object.assign(new Error(j.error || 'Errore'), { status: r.status })
+    return j
+  }
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  let partial = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+      let i
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        let ev = 'message', data = ''
+        for (const l of raw.split('\n')) {
+          if (l.startsWith('event:')) ev = l.slice(6).trim()
+          else if (l.startsWith('data:')) data += l.slice(5).trimStart()
+        }
+        if (!data) continue
+        let d
+        try { d = JSON.parse(data) } catch { continue }
+        if (ev === 'meta') onMeta?.(d)
+        else if (ev === 'delta') { partial += d.text || ''; onDelta?.(d.text || '') }
+        else if (ev === 'error') throw Object.assign(new Error(d.error || 'Errore'), { status: d.status })
+        else if (ev === 'done') { reader.cancel().catch(() => {}); return d } // the server stores the reply after this
+      }
+    }
+  } catch (e) {
+    if (e.partial === undefined) e.partial = partial
+    throw e
+  }
+  throw Object.assign(new Error('La connessione si è interrotta'), { partial })
 }
 
 // ------------------------------------------------------------------ helpers
@@ -75,25 +125,15 @@ function renderText(t) {
   return out.replace(/\n/g, '<br>')
 }
 
-/** Splits text into atoms that are always rendered whole: markdown links, bold spans, URLs, words (+ trailing spaces). */
-const ATOM = /\[[^\]\n]*\]\([^)\s]*\)|\*\*[^*\n]+?\*\*|https?:\/\/[^\s<)]+/y
-export function tokenize(t) {
-  const out = []
-  let i = 0
-  while (i < t.length) {
-    ATOM.lastIndex = i
-    const m = ATOM.exec(t)
-    let j
-    if (m) j = i + m[0].length
-    else {
-      j = i + 1
-      while (j < t.length && !/[\s[*]/.test(t[j]) && !t.startsWith('http', j)) j++
-    }
-    while (j < t.length && /\s/.test(t[j])) j++
-    out.push(t.slice(i, j))
-    i = j
-  }
-  return out
+/**
+ * Text still arriving: hide what would render as broken markdown until it is complete — a link being written at the
+ * end ("[Orari](https://exa"), an unclosed bold marker, a lone trailing "*".
+ */
+export function safePartial(t) {
+  let s = String(t || '')
+  s = s.replace(/\[[^\]\n]*(?:\](?:\([^)\s]*)?)?$/, '')
+  if (((s.match(/\*\*/g) || []).length) % 2) { const k = s.lastIndexOf('**'); s = s.slice(0, k) + s.slice(k + 2) }
+  return s.replace(/\*$/, '')
 }
 
 function luminance(hex) {
@@ -222,6 +262,10 @@ function styles(w, mode) {
 .sug button{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-size:13.5px;line-height:1.35;color:var(--ink);text-align:left;transition:border-color .15s,background .15s}
 .sug button:hover{border-color:var(--c);background:var(--hover)}
 .typing{display:inline-flex;align-items:center;gap:4px;padding:14px 15px}
+.bubble.live::after{content:'';display:inline-block;width:7px;height:1.05em;margin-left:2px;vertical-align:-2px;border-radius:2px;background:currentColor;opacity:.45;animation:wa-caret 1s steps(2,start) infinite}
+@keyframes wa-caret{to{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.bubble.live::after{animation:none}}
+.note{margin:3px 4px 0;font-size:12px;color:var(--muted)}
 .typing i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:wa-dot 1.2s infinite ease-in-out}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
 
@@ -302,7 +346,6 @@ export function mountChat(host, opts) {
   const local = isPreview ? noStore : storage('localStorage')
   const convKey = `wa-conv-${slug}`
   const teaserKey = `wa-teaser-off-${slug}`
-  const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
   ensureFont()
   const shadow = host.shadowRoot || host.attachShadow({ mode: 'open' })
@@ -354,7 +397,7 @@ export function mountChat(host, opts) {
   const endItem = menu.querySelector('[data-act="end"]')
 
   const st = { open: false, convId: session.get(convKey), msgs: [], busy: false, leadDone: false, lead: {}, leadForm: null, started: false, epoch: 0 }
-  let pollTimer = null, teaserTimer = null, streamTimer = null, lastId = null
+  let pollTimer = null, teaserTimer = null, lastId = null, liveFrame = 0
   const cleanups = []
   const on = (el, ev, fn, o) => { el.addEventListener(ev, fn, o); cleanups.push(() => el.removeEventListener(ev, fn, o)) }
 
@@ -411,9 +454,17 @@ export function mountChat(host, opts) {
   function closeMenu() { if (!menu.hidden) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false') } }
 
   // ---------------------------------------------------------------- conversation
+  /** Stops a reply still being streamed (new chat, "Termina chat", widget removed). */
+  function abortStream() {
+    if (st.streaming && typeof st.streaming.abort === 'function') { try { st.streaming.abort() } catch { /* ignore */ } }
+    st.streaming = null
+    body.removeAttribute('aria-busy')
+  }
+
   function resetConv() {
+    abortStream()
     st.epoch++
-    st.convId = null; lastId = null; clearInterval(pollTimer); clearInterval(streamTimer)
+    st.convId = null; lastId = null; clearInterval(pollTimer); stopLive()
     session.del(convKey)
   }
 
@@ -450,51 +501,76 @@ export function mountChat(host, opts) {
 
   async function send(text) {
     const content = String(text ?? input.value).trim()
-    if (!content || st.busy || st.leadForm) return
+    if (!content || st.busy || st.streaming || st.leadForm) return
     input.value = ''; updateSend()
     st.busy = true
     st.msgs.push({ role: 'user', content, fresh: true })
     paint()
     const epoch = st.epoch
+    const prevConv = st.convId
+    // the reply grows as the model writes it: the typing dots stay until the first words arrive
+    const m = { role: 'assistant', content: '', fresh: true, live: true }
+    let shown = false
+    const show = () => { if (shown) return; shown = true; st.busy = false; st.msgs.push(m); paint() }
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null
+    st.streaming = ctrl || true
+    body.setAttribute('aria-busy', 'true') // screen readers read the reply once, when complete
+    const req = { mode: 'message', client_slug: slug, conversation_id: st.convId, content, channel, page_url: location.href, origin: location.hostname, lead: st.leadDone ? st.lead : undefined }
     try {
-      const r = await api({ mode: 'message', client_slug: slug, conversation_id: st.convId, content, channel, page_url: location.href, origin: location.hostname, lead: st.leadDone ? st.lead : undefined })
+      const r = api.stream
+        ? await api.stream(req, {
+          signal: ctrl?.signal,
+          onMeta: (d) => { if (epoch === st.epoch && d.conversation_id && !st.convId) { st.convId = d.conversation_id; session.set(convKey, st.convId) } },
+          onDelta: (t) => { if (epoch !== st.epoch || !t) return; m.content += t; if (!shown) show(); else renderLive(m) },
+        })
+        : await api(req)
       if (epoch !== st.epoch) return
-      if (r.conversation_id && r.conversation_id !== st.convId) {
+      if (r.conversation_id && r.conversation_id !== prevConv) {
         st.convId = r.conversation_id; lastId = r.message_id || null
         session.set(convKey, st.convId); startPolling()
       }
-      const m = { role: r.role || 'assistant', content: r.content || '', id: r.message_id, fresh: true }
-      st.busy = false
-      st.msgs.push(m)
+      stopLive()
+      m.content = r.content || m.content
+      m.id = r.message_id
+      m.live = false
+      if (r.interrupted) m.note = 'La risposta si è interrotta: puoi chiedere di nuovo.'
+      show()
       if (w.lead_capture === 'after' && !st.leadDone && st.msgs.filter((x) => x.role === 'user').length === 1) {
         st.leadForm = { intro: 'Vuoi lasciarci i tuoi dati? Così possiamo ricontattarti se serve.', done: () => {} }
       }
-      stream(m)
-    } catch (e) {
-      if (epoch !== st.epoch) return
-      st.busy = false
-      st.msgs.push({ role: 'assistant', content: `Si è verificato un errore: ${e.message}`, fresh: true })
       paint()
+    } catch (e) {
+      if (epoch !== st.epoch || e?.name === 'AbortError') return
+      stopLive()
+      st.busy = false
+      if (shown && m.content.trim()) {
+        // connection or model stopped half way: keep what was already read
+        m.live = false
+        m.note = 'La risposta si è interrotta: puoi chiedere di nuovo.'
+      } else {
+        if (shown) st.msgs.splice(st.msgs.indexOf(m), 1)
+        st.msgs.push({ role: 'assistant', content: `Si è verificato un errore: ${e.message}`, fresh: true })
+      }
+      paint()
+    } finally {
+      if (epoch === st.epoch) { st.streaming = null; body.removeAttribute('aria-busy'); updateComposer() }
     }
-    updateComposer()
   }
 
-  /** Reveals a reply quickly in whole atoms (words, links, bold spans): ~2 s for a long text, never broken markdown. */
-  function stream(m) {
-    const tokens = tokenize(m.content)
-    if (reduceMotion || tokens.length < 4) { paint(); return }
-    m.shown = 0; m.tokens = tokens
-    paint()
-    const total = Math.min(2000, Math.max(300, tokens.length * 26))
-    const perTick = Math.max(1, Math.ceil(tokens.length / (total / 30)))
-    clearInterval(streamTimer)
-    streamTimer = setInterval(() => {
-      m.shown = Math.min(tokens.length, m.shown + perTick)
+  /** Repaints only the growing bubble, at most once per frame; follows the text only if the visitor is at the bottom. */
+  function renderLive(m) {
+    if (liveFrame) return
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f) => setTimeout(f, 16)
+    liveFrame = raf(() => {
+      liveFrame = 0
+      if (!m.el || !m.live) return
       const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80
-      if (m.el) m.el.innerHTML = renderText(tokens.slice(0, m.shown).join(''))
+      m.el.innerHTML = renderText(safePartial(m.content))
       if (nearBottom) body.scrollTop = body.scrollHeight
-      if (m.shown >= tokens.length) { clearInterval(streamTimer); delete m.tokens; delete m.shown; paint() }
-    }, 30)
+    })
+  }
+  function stopLive() {
+    if (liveFrame) { (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout)(liveFrame); liveFrame = 0 }
   }
 
   function paint() {
@@ -513,11 +589,12 @@ export function mountChat(host, opts) {
       }
       if (m.role === 'human') wrap.insertAdjacentHTML('beforeend', '<div class="who">Operatore</div>')
       const b = document.createElement('div')
-      b.className = 'bubble'
-      b.innerHTML = renderText(m.tokens ? m.tokens.slice(0, m.shown).join('') : m.content)
+      b.className = m.live ? 'bubble live' : 'bubble'
+      b.innerHTML = renderText(m.live ? safePartial(m.content) : m.content)
       m.el = b
       wrap.appendChild(b)
-      if (m.role === 'assistant' && m.id && !m.tokens) {
+      if (m.note) wrap.insertAdjacentHTML('beforeend', `<div class="note">${esc(m.note)}</div>`)
+      if (m.role === 'assistant' && m.id && !m.live) {
         const fb = document.createElement('div')
         fb.className = 'fb'
         fb.innerHTML = `<button type="button" data-v="1" aria-label="Risposta utile" aria-pressed="${m.feedback === 1}" class="${m.feedback === 1 ? 'on' : ''}">${ICON.up}</button>` +
@@ -570,7 +647,7 @@ export function mountChat(host, opts) {
     input.placeholder = st.leadForm ? 'Compila il modulo per continuare' : 'Scrivi un messaggio…'
     updateSend()
   }
-  function updateSend() { sendBtn.disabled = !input.value.trim() || st.busy || !!st.leadForm }
+  function updateSend() { sendBtn.disabled = !input.value.trim() || st.busy || !!st.streaming || !!st.leadForm }
 
   function startPolling() {
     // Picks up operator (human) replies after the cursor (the server never returns bot replies here).
@@ -632,7 +709,7 @@ export function mountChat(host, opts) {
     close: () => setOpen(false),
     destroy() {
       st.epoch++
-      clearInterval(pollTimer); clearInterval(streamTimer); clearTimeout(teaserTimer)
+      clearInterval(pollTimer); clearTimeout(teaserTimer); abortStream(); stopLive()
       cleanups.forEach((f) => f())
       shadow.innerHTML = ''
     },

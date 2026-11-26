@@ -84,10 +84,13 @@ export default function TestQuestions({ client }) {
   const run = async (q) => {
     setRunning((r) => ({ ...r, [q.id]: true }))
     try {
+      const t0 = performance.now()
       const res = await callFunction('chat', { mode: 'test', client_id: client.id, question: q.question })
+      const clientMs = Math.round(performance.now() - t0) // browser → function → browser: includes network and platform start
       const ev = evaluate(q, res.answer)
-      setResults((r) => ({ ...r, [q.id]: res }))
-      await update(q.id, { last_run_at: new Date().toISOString(), last_answer: res.answer, last_pass: ev.pass, last_details: { ...ev, confident: res.confident, best: res.retrieval?.best_similarity, model: res.model } })
+      setResults((r) => ({ ...r, [q.id]: { ...res, client_ms: clientMs } }))
+      const tm = res.timings || res.retrieval?.timings
+      await update(q.id, { last_run_at: new Date().toISOString(), last_answer: res.answer, last_pass: ev.pass, last_details: { ...ev, confident: res.confident, best: res.retrieval?.best_similarity, model: res.model, first_token_ms: tm?.first_token_ms ?? null, total_ms: tm?.total_ms ?? null, client_ms: clientMs } })
     } catch (e) {
       setToast(`“${q.question.slice(0, 40)}”: ${e.message}`)
     }
@@ -162,12 +165,13 @@ export default function TestQuestions({ client }) {
                         <span key={k} className={`badge ${d.checks[k] ? 'green' : 'red'}`}>{d.checks[k] ? okL : koL}{!d.checks[k] && k === 'expected_terms' && d.missing?.length ? `: ${d.missing.join(', ')}` : ''}</span>
                       ) : null)}
                       <button className="btn sm ghost" onClick={() => setOpenId(open ? null : q.id)}>{open ? 'Nascondi risposta' : 'Vedi risposta'}</button>
+                      {d.first_token_ms != null && <span className="small secondary" title="Tempo alla prima parola nella funzione (con lo streaming il visitatore vede il testo da qui)">Prima parola {(d.first_token_ms / 1000).toFixed(1).replace('.', ',')} s · totale {((d.client_ms || d.total_ms) / 1000).toFixed(1).replace('.', ',')} s</span>}
                       <span className="small muted">{fmtDateTime(q.last_run_at)}</span>
                     </div>
                     {open && (
                       <div className="test-answer">
                         <div dangerouslySetInnerHTML={{ __html: renderMessageHtml(q.last_answer || '') }} />
-                        {live?.retrieval ? <RetrievalDetails retrieval={live.retrieval} /> : <div className="hint">Esegui di nuovo la domanda per vedere i contenuti recuperati.</div>}
+                        {live?.retrieval ? <RetrievalDetails retrieval={live.retrieval} clientTimings={live.client_ms ? { total_ms: live.client_ms } : null} /> : <div className="hint">Esegui di nuovo la domanda per vedere i contenuti recuperati.</div>}
                       </div>
                     )}
                   </div>
